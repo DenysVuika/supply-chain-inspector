@@ -1,6 +1,6 @@
 {
   "name": "supply-chain-inspector",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Standalone, zero-dependency CLI for npm supply chain security analysis — vulnerability scanning, OpenSSF Scorecard, install-script detection, publisher history, and more.",
   "type": "module",
   "bin": {
@@ -30,7 +30,7 @@
     "devops",
     "sbom"
   ],
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/denysvuika/supply-chain-inspector.git"
