@@ -37,14 +37,21 @@
 ## Requirements
 
 - **Node.js 18 or later** (uses native `fetch`)
-- No npm install required — the script is fully self-contained
+- No npm install required — the script is fully self-contained, or use `npx` to run it directly from the registry
 
 ---
 
 ## Quick Start
 
 ```bash
-# Clone or copy the script, then run it against any package.json
+# Run directly via npx — no install needed
+npx supply-chain-inspector path/to/package.json
+
+# Or install globally once to get the short "nsci" alias
+npm install -g supply-chain-inspector
+nsci path/to/package.json
+
+# Or clone/copy the script and run it locally
 node inspect-dependencies.js path/to/package.json
 ```
 
@@ -79,6 +86,13 @@ Inspecting 14 package(s) — concurrency: 5
 ## Usage
 
 ```
+# Via npx (no install required)
+npx supply-chain-inspector <path/to/package.json> [options]
+
+# Via short alias (requires: npm install -g supply-chain-inspector)
+nsci <path/to/package.json> [options]
+
+# Or if running the script directly
 node inspect-dependencies.js <path/to/package.json> [options]
 ```
 

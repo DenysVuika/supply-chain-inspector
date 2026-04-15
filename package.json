@@ -1,0 +1,42 @@
+{
+  "name": "supply-chain-inspector",
+  "version": "1.0.0",
+  "description": "Standalone, zero-dependency CLI for npm supply chain security analysis — vulnerability scanning, OpenSSF Scorecard, install-script detection, publisher history, and more.",
+  "type": "module",
+  "bin": {
+    "supply-chain-inspector": "./inspect-dependencies.js",
+    "nsci": "./inspect-dependencies.js"
+  },
+  "files": [
+    "inspect-dependencies.js",
+    "README.md",
+    "LICENSE",
+    "assets/"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "supply-chain",
+    "security",
+    "npm",
+    "audit",
+    "vulnerability",
+    "scorecard",
+    "openssf",
+    "osv",
+    "cli",
+    "dependencies",
+    "devops",
+    "sbom"
+  ],
+  "license": "SEE LICENSE IN LICENSE",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/denysvuika/supply-chain-inspector.git"
+  },
+  "homepage": "https://github.com/denysvuika/supply-chain-inspector#readme",
+  "bugs": {
+    "url": "https://github.com/denysvuika/supply-chain-inspector/issues"
+  }
+}

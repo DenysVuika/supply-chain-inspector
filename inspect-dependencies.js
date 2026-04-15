@@ -1210,6 +1210,13 @@ function generateHtmlReport(results, pkg) {
   const cleanCount = results.length - findings.length;
   const generatedAt = new Date().toUTCString();
 
+  /** Format a date string safely, returning a fallback if the value is invalid. */
+  function safeDate(value, fallback = "—") {
+    if (!value) return fallback;
+    const dt = new Date(value);
+    return isNaN(dt.getTime()) ? fallback : dt.toISOString().slice(0, 10);
+  }
+
   /** Escape a value for safe embedding in HTML. */
   function he(s) {
     return String(s ?? "")
@@ -1406,7 +1413,7 @@ function generateHtmlReport(results, pkg) {
           .reverse()
           .slice(0, 10)
           .map((vh) => {
-            const d = new Date(vh.date).toISOString().slice(0, 10);
+            const d = safeDate(vh.date);
             return (
               `              <li><code>${he(vh.version)}</code>` +
               `<span class="vdate">${d}</span></li>`
@@ -1432,7 +1439,7 @@ function generateHtmlReport(results, pkg) {
           );
         if (meta.publishDate)
           rows.push(
-            `<tr><th>Published</th><td>${new Date(meta.publishDate).toISOString().slice(0, 10)}</td></tr>`,
+            `<tr><th>Published</th><td>${safeDate(meta.publishDate)}</td></tr>`,
           );
         if (meta.dependencyCount !== undefined)
           rows.push(
