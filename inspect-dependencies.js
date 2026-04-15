@@ -58,6 +58,7 @@
  *   Output
  *     --json                 Print the full JSON result array to stdout
  *     --output=<path>        Write JSON to a file (implies --json)
+ *     --html=<path>          Write a standalone HTML security report to a file
  *
  *   Color
  *     NO_COLOR=1             Disable ANSI colors (also auto-disabled when not a TTY)
@@ -76,6 +77,12 @@
  *   # Report on stderr + JSON saved to file — review both independently
  *   node scripts/inspect-dependencies.js package.json --output=results.json
  *
+ *   # Write a standalone HTML report — open in any browser, no server needed
+ *   node scripts/inspect-dependencies.js package.json --html=report.html
+ *
+ *   # HTML report + JSON side by side (useful for both humans and tooling)
+ *   node scripts/inspect-dependencies.js package.json --output=scan.json --html=report.html
+ *
  *   # Suppress the report, get only JSON (e.g. for scripting)
  *   node scripts/inspect-dependencies.js package.json --json 2>/dev/null
  *
@@ -88,6 +95,11 @@
  *   node scripts/inspect-dependencies.js package.json \
  *     --include-dev --include-peer \
  *     --output=scan.json
+ *
+ *   # Full scan with both HTML report and JSON output
+ *   node scripts/inspect-dependencies.js package.json \
+ *     --include-dev --include-peer \
+ *     --output=scan.json --html=report.html
  *
  *   # Quick scan — skip Scorecard (no outbound calls to api.scorecard.dev)
  *   node scripts/inspect-dependencies.js package.json --no-scorecard
@@ -174,6 +186,7 @@ function parseArgs(argv) {
     versionHistory: 10, // 10 covers all threat patterns; see extractVersionHistory
     lockfilePath: null,
     output: null,
+    html: null,
     json: false,
     skipScorecard: false,
     skipVulns: false,
@@ -243,6 +256,10 @@ function parseArgs(argv) {
       opts.output = arg.split("=").slice(1).join("=");
       // --output implies --json (no point writing a file with no content)
       opts.json = true;
+      continue;
+    }
+    if (arg.startsWith("--html=")) {
+      opts.html = arg.split("=").slice(1).join("=");
       continue;
     }
     if (!arg.startsWith("--")) {
@@ -1144,6 +1161,786 @@ function buildNotFoundResult(name, versionSpec, scope, lockfileVersion) {
   };
 }
 
+// ─── HTML report ──────────────────────────────────────────────────────────────
+
+/**
+ * Generate a fully self-contained HTML security report (no external dependencies).
+ * Includes a summary table and collapsible per-package detail sections.
+ *
+ * @param {Array}  results  Output of inspectPackage for every dependency
+ * @param {object} pkg      Parsed package.json of the scanned project
+ * @returns {string}        Complete HTML document as a string
+ */
+function generateHtmlReport(results, pkg) {
+  const pkgLabel =
+    `${pkg.name ?? "(unnamed)"}` + (pkg.version ? `@${pkg.version}` : "");
+
+  // Classify each result into its security signals — mirrors printReport logic
+  const annotated = results.map((r) => {
+    const signals = [];
+    if (r.notFound) signals.push("not_found");
+    if ((r.vulnerabilities?.summary?.total ?? 0) > 0) signals.push("vulns");
+    if (r.registry?.hasInstallScripts) signals.push("scripts");
+    if (
+      r.scorecard?.score !== null &&
+      r.scorecard?.score !== undefined &&
+      r.scorecard.score < 5
+    )
+      signals.push("low_scorecard");
+    if ((r.registry?.publishedHoursAgo ?? Infinity) < 48)
+      signals.push("very_recent");
+    if (!r.sourceRepository && !r.notFound) signals.push("no_repo");
+    return { r, signals };
+  });
+
+  const findings = annotated.filter((a) => a.signals.length > 0);
+
+  const totals = results.reduce(
+    (acc, r) => {
+      const s = r.vulnerabilities?.summary ?? {};
+      acc.critical += s.critical ?? 0;
+      acc.high += s.high ?? 0;
+      acc.medium += s.medium ?? 0;
+      acc.low += s.low ?? 0;
+      return acc;
+    },
+    { critical: 0, high: 0, medium: 0, low: 0 },
+  );
+
+  const cleanCount = results.length - findings.length;
+  const generatedAt = new Date().toUTCString();
+
+  /** Escape a value for safe embedding in HTML. */
+  function he(s) {
+    return String(s ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function vulnBadgeHtml(summary) {
+    if (!summary || summary.total === 0)
+      return '<span class="badge clean">─</span>';
+    if (summary.critical > 0)
+      return `<span class="badge critical">${summary.total} CRITICAL</span>`;
+    if (summary.high > 0)
+      return `<span class="badge high">${summary.total} HIGH</span>`;
+    if (summary.medium > 0)
+      return `<span class="badge medium">${summary.total} MEDIUM</span>`;
+    return `<span class="badge low">${summary.total} LOW</span>`;
+  }
+
+  function scorecardHtml(score) {
+    if (score === null || score === undefined)
+      return '<span class="sc-na">─ n/a</span>';
+    const pct = Math.round((score / 10) * 100);
+    const cls = score < 3 ? "sc-low" : score < 5 ? "sc-med" : "sc-high";
+    return (
+      `<span class="sc-bar ${cls}"><span class="sc-fill" style="width:${pct}%"></span></span>` +
+      ` <span class="sc-score ${cls}">${score.toFixed(1)}</span>`
+    );
+  }
+
+  function sevBadgeHtml(sev) {
+    const cls = (sev ?? "unknown").toLowerCase();
+    return `<span class="sev-badge ${cls}">${he(sev ?? "UNKNOWN")}</span>`;
+  }
+
+  // ── Per-package table rows ─────────────────────────────────────────────────
+  const tableRows = annotated
+    .map(({ r, signals }) => {
+      const ver = r.resolvedVersion ?? r.versionSpec ?? "?";
+      const hasFindings = signals.length > 0;
+      const rowClass = r.notFound
+        ? "row-not-found"
+        : hasFindings
+          ? "row-findings"
+          : "row-clean";
+
+      const nameHtml = hasFindings
+        ? `<a href="#pkg-${he(r.name)}" class="pkg-link">${he(r.name)}</a>`
+        : he(r.name);
+
+      const scriptHtml = r.registry?.hasInstallScripts
+        ? '<span class="badge scripts">&#x26A0; yes</span>'
+        : '<span class="badge clean">─</span>';
+
+      const repoHtml = r.sourceRepository
+        ? `<a href="${he(r.sourceRepository)}" target="_blank" rel="noopener" class="repo-link" title="${he(r.sourceRepository)}">&#x2197;</a>`
+        : '<span class="dim">─</span>';
+
+      return (
+        `        <tr class="${rowClass}">\n` +
+        `          <td class="td-name">${nameHtml}</td>\n` +
+        `          <td class="td-ver"><code>${he(ver)}</code></td>\n` +
+        `          <td class="td-scope"><span class="scope">${he(r.scope ?? "")}</span></td>\n` +
+        `          <td class="td-vuln">${vulnBadgeHtml(r.vulnerabilities?.summary)}</td>\n` +
+        `          <td class="td-sc">${scorecardHtml(r.scorecard?.score ?? null)}</td>\n` +
+        `          <td class="td-scripts">${scriptHtml}</td>\n` +
+        `          <td class="td-repo">${repoHtml}</td>\n` +
+        `        </tr>`
+      );
+    })
+    .join("\n");
+
+  // ── Collapsible per-package finding cards ─────────────────────────────────
+  const findingCards = findings
+    .map(({ r, signals }) => {
+      const ver = r.resolvedVersion ?? r.versionSpec ?? "?";
+
+      const chips = [];
+      if (signals.includes("vulns")) {
+        const s = r.vulnerabilities.summary;
+        const cls =
+          s.critical > 0
+            ? "critical"
+            : s.high > 0
+              ? "high"
+              : s.medium > 0
+                ? "medium"
+                : "low";
+        chips.push(
+          `<span class="chip ${cls}">${s.total} vuln${s.total !== 1 ? "s" : ""}</span>`,
+        );
+      }
+      if (signals.includes("scripts"))
+        chips.push('<span class="chip scripts">install scripts</span>');
+      if (signals.includes("low_scorecard"))
+        chips.push(
+          `<span class="chip scorecard">Scorecard ${r.scorecard.score.toFixed(1)}/10</span>`,
+        );
+      if (signals.includes("very_recent"))
+        chips.push(
+          `<span class="chip recent">published ${r.registry.publishedHoursAgo}h ago</span>`,
+        );
+      if (signals.includes("not_found"))
+        chips.push('<span class="chip not-found">not found on registry</span>');
+      if (signals.includes("no_repo"))
+        chips.push('<span class="chip no-repo">no source repo</span>');
+
+      let body = "";
+
+      // ── Vulnerabilities ──────────────────────────────────────────────────
+      if (signals.includes("vulns")) {
+        const list = r.vulnerabilities.list ?? [];
+        const items = list
+          .map((v) => {
+            const fix = v.affectedRanges?.find((rng) => rng.fixed);
+            const aliases = v.aliases?.length
+              ? ` <span class="aliases">${v.aliases.map(he).join(", ")}</span>`
+              : "";
+            const refs = (v.references ?? [])
+              .map(
+                (url) =>
+                  `<a href="${he(url)}" target="_blank" rel="noopener">${he(url)}</a>`,
+              )
+              .join(" ");
+            return (
+              `              <li class="vuln-item ${(v.severity ?? "unknown").toLowerCase()}">\n` +
+              `                <div class="vuln-header">${sevBadgeHtml(v.severity)} <strong>${he(v.id)}</strong>${aliases}</div>\n` +
+              `                <div class="vuln-summary">${he(v.summary)}</div>\n` +
+              (fix
+                ? `                <div class="vuln-fix">Fix available: <code>${he(fix.fixed)}</code></div>\n`
+                : "") +
+              (refs
+                ? `                <div class="vuln-refs">${refs}</div>\n`
+                : "") +
+              `              </li>`
+            );
+          })
+          .join("\n");
+        body +=
+          `\n          <div class="detail-section">\n` +
+          `            <h4>Vulnerabilities (${list.length})</h4>\n` +
+          `            <ul class="vuln-list">\n${items}\n            </ul>\n` +
+          `          </div>`;
+      }
+
+      // ── Install scripts ───────────────────────────────────────────────────
+      if (signals.includes("scripts")) {
+        const scripts = Object.entries(r.registry?.lifecycleScripts ?? {});
+        const items = scripts
+          .map(
+            ([key, cmd]) =>
+              `              <li><code class="script-key">${he(key)}</code>` +
+              `<span class="script-cmd">${he(cmd)}</span></li>`,
+          )
+          .join("\n");
+        body +=
+          `\n          <div class="detail-section">\n` +
+          `            <h4>Install Scripts (${scripts.length})</h4>\n` +
+          `            <ul class="script-list">\n${items}\n            </ul>\n` +
+          `          </div>`;
+      }
+
+      // ── Low Scorecard checks ──────────────────────────────────────────────
+      if (signals.includes("low_scorecard")) {
+        const bad = (r.scorecard.checks ?? [])
+          .filter((chk) => typeof chk.score === "number" && chk.score < 5)
+          .sort((a, b) => a.score - b.score)
+          .slice(0, 8);
+        const items = bad
+          .map((chk) => {
+            const score = chk.score === -1 ? "N/A" : `${chk.score}/10`;
+            const reason = chk.reason
+              ? ` <span class="sc-check-reason">&#x2014; ${he(chk.reason)}</span>`
+              : "";
+            return (
+              `              <li>` +
+              `<span class="sc-check-name">${he(chk.name)}</span>` +
+              `<span class="sc-check-score">${score}</span>${reason}</li>`
+            );
+          })
+          .join("\n");
+        body +=
+          `\n          <div class="detail-section">\n` +
+          `            <h4>Low Scorecard Checks</h4>\n` +
+          `            <ul class="scorecard-list">\n${items}\n            </ul>\n` +
+          `          </div>`;
+      }
+
+      // ── Version history ───────────────────────────────────────────────────
+      if ((r.versionHistory?.length ?? 0) > 0) {
+        const items = [...r.versionHistory]
+          .reverse()
+          .slice(0, 10)
+          .map((vh) => {
+            const d = new Date(vh.date).toISOString().slice(0, 10);
+            return (
+              `              <li><code>${he(vh.version)}</code>` +
+              `<span class="vdate">${d}</span></li>`
+            );
+          })
+          .join("\n");
+        body +=
+          `\n          <div class="detail-section">\n` +
+          `            <h4>Recent Version History</h4>\n` +
+          `            <ul class="version-list">\n${items}\n            </ul>\n` +
+          `          </div>`;
+      }
+
+      // ── Package metadata ──────────────────────────────────────────────────
+      const meta = r.registry;
+      if (meta) {
+        const rows = [];
+        if (meta.license)
+          rows.push(`<tr><th>License</th><td>${he(meta.license)}</td></tr>`);
+        if (meta.publisher)
+          rows.push(
+            `<tr><th>Publisher</th><td>${he(meta.publisher)}</td></tr>`,
+          );
+        if (meta.publishDate)
+          rows.push(
+            `<tr><th>Published</th><td>${new Date(meta.publishDate).toISOString().slice(0, 10)}</td></tr>`,
+          );
+        if (meta.dependencyCount !== undefined)
+          rows.push(
+            `<tr><th>Dependencies</th><td>${meta.dependencyCount}</td></tr>`,
+          );
+        if (meta.unpackedSize)
+          rows.push(
+            `<tr><th>Unpacked size</th><td>${(meta.unpackedSize / 1024).toFixed(1)} kB</td></tr>`,
+          );
+        if (rows.length > 0) {
+          body +=
+            `\n          <div class="detail-section">\n` +
+            `            <h4>Package Info</h4>\n` +
+            `            <table class="meta-table"><tbody>${rows.join("")}</tbody></table>\n` +
+            `          </div>`;
+        }
+      }
+
+      return (
+        `      <details class="pkg-finding" id="pkg-${he(r.name)}">\n` +
+        `        <summary>\n` +
+        `          <span class="pkg-name">${he(r.name)}</span>\n` +
+        `          <span class="pkg-ver">${he(ver)}</span>\n` +
+        `          <span class="chips">${chips.join("")}</span>\n` +
+        `        </summary>\n` +
+        `        <div class="finding-body">${body}\n        </div>\n` +
+        `      </details>`
+      );
+    })
+    .join("\n");
+
+  // ── Totals banner chips ───────────────────────────────────────────────────
+  const totalChips = [];
+  if (totals.critical)
+    totalChips.push(
+      `<span class="total-chip critical">&#x25CF; ${totals.critical} critical</span>`,
+    );
+  if (totals.high)
+    totalChips.push(
+      `<span class="total-chip high">&#x25CF; ${totals.high} high</span>`,
+    );
+  if (totals.medium)
+    totalChips.push(
+      `<span class="total-chip medium">&#x25CF; ${totals.medium} medium</span>`,
+    );
+  if (totals.low)
+    totalChips.push(
+      `<span class="total-chip low">&#x25CF; ${totals.low} low</span>`,
+    );
+  if (findings.length > 0)
+    totalChips.push(
+      `<span class="total-chip findings">&#x26A0; ${findings.length} with findings</span>`,
+    );
+  if (cleanCount > 0)
+    totalChips.push(
+      `<span class="total-chip clean">&#x2713; ${cleanCount} clean</span>`,
+    );
+  if (findings.length === 0)
+    totalChips.push(
+      `<span class="total-chip clean">&#x2713; all ${results.length} package(s) clean</span>`,
+    );
+
+  const findingsSection =
+    findings.length > 0
+      ? `  <section>\n    <h2>Findings (${findings.length})</h2>\n${findingCards}\n  </section>`
+      : `  <section>\n    <p class="all-clean">&#x2713; No security issues detected across all ${results.length} package(s).</p>\n  </section>`;
+
+  // ── Assemble the full HTML document ──────────────────────────────────────
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Supply Chain Report &#x2014; ${he(pkgLabel)}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:     #0d1117;
+      --bg2:    #161b22;
+      --bg3:    #21262d;
+      --border: #30363d;
+      --text:   #c9d1d9;
+      --dim:    #8b949e;
+      --bright: #f0f6fc;
+      --red:    #f85149;
+      --orange: #e3a84a;
+      --yellow: #d4a017;
+      --green:  #3fb950;
+      --blue:   #58a6ff;
+      --radius: 6px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                   Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      padding-bottom: 64px;
+    }
+
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 0.85em;
+      background: var(--bg3);
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+
+    /* ── Header ── */
+    .site-header {
+      background: var(--bg2);
+      border-bottom: 1px solid var(--border);
+      padding: 20px 32px;
+    }
+    .site-header h1 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--bright);
+      letter-spacing: -0.02em;
+    }
+    .site-header .meta {
+      margin-top: 6px;
+      font-size: 0.82rem;
+      color: var(--dim);
+      display: flex;
+      gap: 18px;
+      flex-wrap: wrap;
+    }
+    .site-header .meta strong { color: var(--text); }
+
+    /* ── Totals banner ── */
+    .totals-bar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 12px 32px;
+      background: var(--bg2);
+      border-bottom: 1px solid var(--border);
+    }
+    .total-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 0.77rem;
+      font-weight: 600;
+      border: 1px solid currentColor;
+    }
+    .total-chip.critical { color: #ff4444; background: #200a0a; }
+    .total-chip.high     { color: #f85149; background: #200a0a; }
+    .total-chip.medium   { color: #e3a84a; background: #1e1206; }
+    .total-chip.low      { color: #8b949e; background: #1c2128; }
+    .total-chip.clean    { color: #3fb950; background: #0a1f10; }
+    .total-chip.findings { color: #e3a84a; background: #1e1206; }
+
+    /* ── Layout ── */
+    .main { max-width: 1100px; margin: 0 auto; padding: 0 32px; }
+    section { margin-top: 28px; }
+    section > h2 {
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--dim);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 10px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--border);
+    }
+    .all-clean { color: var(--green); padding: 14px 0; font-size: 0.9rem; }
+
+    /* ── Package table ── */
+    .pkg-table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+    .pkg-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    .pkg-table th {
+      text-align: left;
+      padding: 8px 14px;
+      font-size: 0.71rem;
+      font-weight: 600;
+      color: var(--dim);
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      background: var(--bg3);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .pkg-table td {
+      padding: 7px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    .pkg-table tr:last-child td { border-bottom: none; }
+    .pkg-table tbody tr { background: var(--bg2); }
+    .pkg-table tbody tr:hover td { background: var(--bg3); transition: background 0.1s; }
+    .pkg-link { color: var(--bright); font-weight: 500; }
+    .pkg-link:hover { color: var(--blue); }
+    .td-repo { text-align: center; }
+    .repo-link { font-size: 1rem; opacity: 0.6; }
+    .repo-link:hover { opacity: 1; }
+    .dim { color: var(--dim); }
+    .scope {
+      display: inline-block;
+      padding: 1px 7px;
+      border-radius: 10px;
+      font-size: 0.7rem;
+      background: var(--bg3);
+      color: var(--dim);
+      border: 1px solid var(--border);
+    }
+
+    /* ── Vuln / script badges ── */
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 0.71rem;
+      font-weight: 700;
+      border: 1px solid transparent;
+    }
+    .badge.critical { background: #200a0a; color: #ff4444; border-color: #ff4444; }
+    .badge.high     { background: #200a0a; color: #f85149; border-color: #f85149; }
+    .badge.medium   { background: #1e1206; color: #e3a84a; border-color: #e3a84a; }
+    .badge.low      { background: #1c2128; color: #8b949e; border-color: #8b949e; }
+    .badge.clean    { color: var(--dim); font-weight: 400; }
+    .badge.scripts  { background: #1e1206; color: #e3a84a; border-color: #e3a84a; }
+
+    /* ── Scorecard bar ── */
+    .sc-bar {
+      display: inline-block;
+      width: 56px;
+      height: 7px;
+      background: var(--bg3);
+      border-radius: 4px;
+      vertical-align: middle;
+      position: relative;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .sc-fill {
+      position: absolute;
+      top: 0; left: 0; bottom: 0;
+      border-radius: 4px;
+      transition: width 0.4s ease;
+    }
+    .sc-bar.sc-high .sc-fill { background: var(--green); }
+    .sc-bar.sc-med  .sc-fill { background: var(--orange); }
+    .sc-bar.sc-low  .sc-fill { background: var(--red); }
+    .sc-score { font-size: 0.8rem; vertical-align: middle; margin-left: 5px; }
+    .sc-score.sc-high { color: var(--green); }
+    .sc-score.sc-med  { color: var(--orange); }
+    .sc-score.sc-low  { color: var(--red); }
+    .sc-na { color: var(--dim); font-size: 0.8rem; }
+
+    /* ── Finding cards (collapsible <details>) ── */
+    .pkg-finding {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 6px;
+      overflow: hidden;
+    }
+    .pkg-finding > summary {
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 11px 16px;
+      cursor: pointer;
+      user-select: none;
+      flex-wrap: wrap;
+    }
+    .pkg-finding > summary::-webkit-details-marker { display: none; }
+    .pkg-finding > summary::before {
+      content: "\\25B6";
+      font-size: 0.6rem;
+      color: var(--dim);
+      flex-shrink: 0;
+      transition: transform 0.15s ease;
+    }
+    .pkg-finding[open] > summary::before { transform: rotate(90deg); }
+    .pkg-finding > summary:hover { background: var(--bg3); }
+    .pkg-finding > summary .pkg-name {
+      font-weight: 600;
+      color: var(--bright);
+      font-size: 0.92rem;
+    }
+    .pkg-finding > summary .pkg-ver {
+      font-size: 0.77rem;
+      color: var(--dim);
+      font-family: "SFMono-Regular", Consolas, monospace;
+      background: var(--bg3);
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
+    .chips { display: inline-flex; gap: 5px; flex-wrap: wrap; margin-left: auto; }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 0.69rem;
+      font-weight: 600;
+      border: 1px solid currentColor;
+    }
+    .chip.critical  { color: #ff4444; background: #200a0a; }
+    .chip.high      { color: #f85149; background: #200a0a; }
+    .chip.medium    { color: #e3a84a; background: #1e1206; }
+    .chip.low       { color: #8b949e; background: #1c2128; }
+    .chip.scripts   { color: #e3a84a; background: #1e1206; }
+    .chip.scorecard { color: #e3a84a; background: #1e1206; }
+    .chip.recent    { color: #d4a017; background: #1e1a06; }
+    .chip.not-found { color: #f85149; background: #200a0a; }
+    .chip.no-repo   { color: var(--dim); background: var(--bg3); }
+
+    .finding-body {
+      padding: 4px 16px 16px;
+      border-top: 1px solid var(--border);
+    }
+    .detail-section { margin-top: 14px; }
+    .detail-section h4 {
+      font-size: 0.69rem;
+      font-weight: 700;
+      color: var(--dim);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 8px;
+    }
+
+    /* Vulnerability list */
+    .vuln-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+    .vuln-item {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--border);
+      border-radius: var(--radius);
+      padding: 9px 13px;
+      font-size: 0.82rem;
+    }
+    .vuln-item.critical { border-left-color: #ff4444; }
+    .vuln-item.high     { border-left-color: #f85149; }
+    .vuln-item.medium   { border-left-color: #e3a84a; }
+    .vuln-item.low      { border-left-color: #8b949e; }
+    .vuln-item.unknown  { border-left-color: var(--dim); }
+    .vuln-header {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-bottom: 4px;
+      flex-wrap: wrap;
+    }
+    .vuln-header strong { color: var(--bright); }
+    .aliases { font-size: 0.72rem; color: var(--dim); }
+    .vuln-summary { color: var(--text); margin-bottom: 3px; }
+    .vuln-fix { font-size: 0.78rem; color: var(--green); }
+    .vuln-fix code { background: transparent; padding: 0; color: var(--green); }
+    .vuln-refs { font-size: 0.72rem; color: var(--dim); margin-top: 4px; word-break: break-all; }
+
+    .sev-badge {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 0.67rem;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .sev-badge.critical { background: #ff4444; color: #fff; }
+    .sev-badge.high     { background: #f85149; color: #fff; }
+    .sev-badge.medium   { background: #e3a84a; color: #000; }
+    .sev-badge.low      { background: var(--bg3); color: var(--dim); border: 1px solid var(--border); }
+    .sev-badge.unknown  { background: var(--bg3); color: var(--dim); border: 1px solid var(--border); }
+
+    /* Install scripts */
+    .script-list { list-style: none; display: flex; flex-direction: column; gap: 5px; }
+    .script-list li {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 6px 10px;
+      font-size: 0.82rem;
+    }
+    .script-key {
+      color: #e3a84a;
+      min-width: 110px;
+      flex-shrink: 0;
+      background: transparent;
+      padding: 0;
+    }
+    .script-cmd { color: var(--dim); word-break: break-all; }
+
+    /* Scorecard checks */
+    .scorecard-list { list-style: none; }
+    .scorecard-list li {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      padding: 5px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.82rem;
+    }
+    .scorecard-list li:last-child { border-bottom: none; }
+    .sc-check-name { color: var(--bright); font-weight: 500; min-width: 180px; flex-shrink: 0; }
+    .sc-check-score { color: var(--red); font-weight: 600; min-width: 44px; }
+    .sc-check-reason { color: var(--dim); }
+
+    /* Version history grid */
+    .version-list {
+      list-style: none;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
+      gap: 4px;
+    }
+    .version-list li {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.78rem;
+      padding: 4px 8px;
+      background: var(--bg3);
+      border-radius: 4px;
+    }
+    .version-list code { background: transparent; padding: 0; color: var(--blue); }
+    .vdate { color: var(--dim); }
+
+    /* Package metadata table */
+    .meta-table { border-collapse: collapse; font-size: 0.82rem; }
+    .meta-table th,
+    .meta-table td { padding: 4px 12px 4px 0; text-align: left; border-bottom: 1px solid var(--border); }
+    .meta-table tr:last-child th,
+    .meta-table tr:last-child td { border-bottom: none; }
+    .meta-table th { color: var(--dim); font-weight: 500; width: 130px; vertical-align: top; }
+    .meta-table td { color: var(--text); }
+
+    /* ── Footer ── */
+    .site-footer {
+      margin-top: 48px;
+      padding: 14px 32px;
+      border-top: 1px solid var(--border);
+      font-size: 0.72rem;
+      color: var(--dim);
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+  </style>
+</head>
+<body>
+
+<header class="site-header">
+  <h1>&#x1F6E1;&#xFE0F; Supply Chain Report</h1>
+  <div class="meta">
+    <span><strong>${he(pkgLabel)}</strong></span>
+    <span>${results.length} package(s) inspected</span>
+    <span>Generated ${generatedAt}</span>
+  </div>
+</header>
+
+<div class="totals-bar">
+  ${totalChips.join("\n  ")}
+</div>
+
+<div class="main">
+
+  <section>
+    <h2>Packages</h2>
+    <div class="pkg-table-wrap">
+      <table class="pkg-table">
+        <thead>
+          <tr>
+            <th>Package</th>
+            <th>Version</th>
+            <th>Scope</th>
+            <th>Vulnerabilities</th>
+            <th>Scorecard</th>
+            <th>Scripts</th>
+            <th>Repo</th>
+          </tr>
+        </thead>
+        <tbody>
+${tableRows}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+${findingsSection}
+
+</div>
+
+<footer class="site-footer">
+  <span>Generated by <strong>inspect-dependencies.js</strong></span>
+  <span>Data sources: npm Registry &#x00B7; OSV.dev &#x00B7; OpenSSF Scorecard</span>
+</footer>
+
+</body>
+</html>`;
+}
+
 // ─── Terminal report ──────────────────────────────────────────────────────────
 
 /**
@@ -1414,6 +2211,7 @@ async function main() {
         "  --lockfile=<path>      Path to package-lock.json",
         "  --json                 Print the full JSON result to stdout",
         "  --output=<path>        Write JSON to a file (implies --json)",
+        "  --html=<path>          Write a standalone HTML report to a file",
         "  --no-scorecard         Skip OpenSSF Scorecard lookups",
         "  --no-vulns             Skip OSV.dev vulnerability lookups",
         "  --cache-dir=<path>     File-cache directory (default: .cache/ next to this script)",
@@ -1558,6 +2356,17 @@ async function main() {
   // ── Summary ─────────────────────────────────────────────────────────────────
   // ── Security report ───────────────────────────────────────────────────────
   printReport(results, pkg, opts.showFindings);
+
+  // ── HTML report (opt-in via --html=<path>) ────────────────────────────────
+  if (opts.html) {
+    const htmlPath = resolve(opts.html);
+    try {
+      writeFileSync(htmlPath, generateHtmlReport(results, pkg), "utf8");
+      log(`${C.dim}  HTML report written to: ${opts.html}${C.reset}`);
+    } catch (err) {
+      logErr(`Failed to write HTML report: ${err.message}`);
+    }
+  }
 
   // ── Cache stats ───────────────────────────────────────────────────────────
   const uniqueNpm = _npmCache.size;

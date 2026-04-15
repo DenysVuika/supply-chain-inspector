@@ -140,3 +140,5 @@ vite.config.ts.timestamp-*
 
 # Project rules
 .cache
+report.html
+report.json

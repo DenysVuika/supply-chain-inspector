@@ -143,6 +143,7 @@ an early refresh:
 |---|---|
 | `--json` | Print the full result array as JSON to stdout |
 | `--output=<path>` | Write JSON to a file (implies `--json`) |
+| `--html=<path>` | Write a fully standalone HTML security report to a file (no server or internet connection required to view) |
 
 ### Color
 
@@ -166,6 +167,12 @@ node inspect-dependencies.js package.json --json
 # Report on stderr + JSON saved to a file — review both independently
 node inspect-dependencies.js package.json --output=results.json
 
+# Write a standalone HTML report — open report.html in any browser
+node inspect-dependencies.js package.json --html=report.html
+
+# HTML report + JSON side by side (useful for both humans and tooling)
+node inspect-dependencies.js package.json --html=report.html --output=results.json
+
 # Suppress the report, get only JSON (useful for scripting)
 node inspect-dependencies.js package.json --json 2>/dev/null
 
@@ -182,6 +189,14 @@ node inspect-dependencies.js package.json --json | llm "analyze these deps"
 node inspect-dependencies.js package.json \
   --include-dev --include-peer \
   --output=scan.json
+
+# Generate an HTML report for easy sharing with your team
+node inspect-dependencies.js package.json --html=report.html
+
+# Full scan with HTML report, JSON data, and findings detail
+node inspect-dependencies.js package.json \
+  --include-dev --include-peer \
+  --output=scan.json --html=report.html --findings
 
 # Full deep scan — all groups, all transitive deps, with findings detail
 node inspect-dependencies.js package.json \
@@ -352,6 +367,7 @@ stderr to your log system and optionally save the JSON artifact.
     NO_COLOR=1 node inspect-dependencies.js package.json \
       --findings \
       --output=supply-chain.json \
+      --html=supply-chain.html \
       2>&1 | tee supply-chain-report.txt
 
 - name: Upload scan results
@@ -361,6 +377,7 @@ stderr to your log system and optionally save the JSON artifact.
     path: |
       supply-chain-report.txt
       supply-chain.json
+      supply-chain.html
 ```
 
 ---
