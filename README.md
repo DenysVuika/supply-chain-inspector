@@ -1,9 +1,13 @@
-# node-security-checks
+# 🛡️ Supply Chain Inspector
 
-A standalone, zero-dependency Node.js script that performs supply chain security
-analysis on your npm dependencies. It reads a `package.json`, queries public
-security APIs for every dependency, and prints a formatted report to your terminal.
-JSON output is opt-in so the console stays clean for large projects.
+> A standalone, zero-dependency Node.js script for supply chain security analysis
+> of npm dependencies. Queries public security APIs for every package and delivers
+> a formatted terminal report **and** a shareable standalone HTML report — with no
+> install step required.
+
+![Summary table — packages, versions, vulnerability badges, scorecard bars](assets/html-report-01.png)
+
+![Collapsible findings detail — scorecard checks, version history, package info](assets/html-report-02.png)
 
 ---
 
