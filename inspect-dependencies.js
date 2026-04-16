@@ -13,7 +13,14 @@
  *
  * ─── Usage ────────────────────────────────────────────────────────────────────
  *
- *   node scripts/inspect-dependencies.js <path/to/package.json> [options]
+ node scripts/inspect-dependencies.js <path/to/package.json|url> [options]
+
+ Examples:
+   # Local file
+   node scripts/inspect-dependencies.js package.json
+
+   # Remote URL (GitHub, raw content, etc.)
+   node scripts/inspect-dependencies.js https://raw.githubusercontent.com/angular/angular/refs/heads/main/package.json
  *
  * ─── Options ──────────────────────────────────────────────────────────────────
  *
@@ -35,8 +42,9 @@
  *
  *   Data collection
  *     --concurrency=<N>      Max parallel package fetches (default: 5)
- *     --lockfile=<path>      Path to package-lock.json for exact version resolution
- *                            (auto-detected next to package.json if not given)
+ *     --lockfile=<path|url>  Path or URL to package-lock.json for exact version resolution
+ *                            (auto-detected next to package.json if not given;
+ *                            for URLs, auto-detects package-lock.json in same directory)
  *     --no-scorecard         Skip OpenSSF Scorecard lookups (faster, offline-friendly)
  *     --no-vulns             Skip OSV.dev vulnerability lookups
  *
@@ -100,6 +108,17 @@
  *   node scripts/inspect-dependencies.js package.json \
  *     --include-dev --include-peer \
  *     --output=scan.json --html=report.html
+ *
+ *   # Inspect a remote package.json from a GitHub repository
+ *   node scripts/inspect-dependencies.js https://raw.githubusercontent.com/angular/angular/refs/heads/main/package.json
+ *
+ *   # Inspect remote package.json with full scan (auto-detects remote lockfile)
+ *   node scripts/inspect-dependencies.js https://raw.githubusercontent.com/user/repo/main/package.json \
+ *     --include-dev --html=report.html
+ *
+ *   # Inspect remote package.json with explicit remote lockfile URL
+ *   node scripts/inspect-dependencies.js https://raw.githubusercontent.com/user/repo/main/package.json \
+ *     --lockfile=https://raw.githubusercontent.com/user/repo/main/package-lock.json
  *
  *   # Quick scan — skip Scorecard (no outbound calls to api.scorecard.dev)
  *   node scripts/inspect-dependencies.js package.json --no-scorecard
@@ -498,10 +517,49 @@ function writeToCache(key, data) {
 // ─── Lockfile parsing (package-lock.json v1/v2/v3) ───────────────────────────
 
 /**
- * Parse a package-lock.json and return a Map of { packageName -> resolvedVersion }.
+ * Parse lockfile data object and return a Map of { packageName -> resolvedVersion }.
  * Only stores the top-level (non-nested) entry for each name, which is the version
  * that the project itself directly depends on.
  * Supports lockfile formats v1 (dependencies), v2/v3 (packages).
+ */
+function parseLockfileVersions(lock) {
+  const versions = new Map();
+
+  // v2 / v3 format: lock.packages is a flat map of node_modules paths
+  if (lock.packages && typeof lock.packages === "object") {
+    for (const [pkgPath, pkgMeta] of Object.entries(lock.packages)) {
+      if (!pkgPath.startsWith("node_modules/")) continue;
+      if (!pkgMeta.version) continue;
+      // Strip the leading "node_modules/" (handles nested: node_modules/a/node_modules/b)
+      const name = pkgPath.replace(/^node_modules\//, "");
+      // Only store the top-level entry (no nesting slash after scope slash)
+      const parts = name.split("/");
+      const topName = parts[0].startsWith("@")
+        ? `${parts[0]}/${parts[1]}`
+        : parts[0];
+      if (!versions.has(topName)) {
+        versions.set(topName, pkgMeta.version);
+      }
+    }
+    return versions;
+  }
+
+  // v1 format: lock.dependencies is a nested tree
+  if (lock.dependencies && typeof lock.dependencies === "object") {
+    for (const [name, pkgMeta] of Object.entries(lock.dependencies)) {
+      if (pkgMeta.version) {
+        versions.set(name, pkgMeta.version);
+      }
+    }
+    return versions;
+  }
+
+  return versions;
+}
+
+/**
+ * Load and parse a package-lock.json from a file path.
+ * Returns a Map of { packageName -> resolvedVersion }.
  */
 function loadLockfileVersions(lockfilePath) {
   if (!lockfilePath || !existsSync(lockfilePath)) return new Map();
@@ -509,36 +567,76 @@ function loadLockfileVersions(lockfilePath) {
   try {
     const raw = readFileSync(lockfilePath, "utf8");
     const lock = JSON.parse(raw);
-    const versions = new Map();
+    return parseLockfileVersions(lock);
+  } catch (err) {
+    logWarn(`Failed to parse lockfile at ${lockfilePath}: ${err.message}`);
+    return new Map();
+  }
+}
 
-    // v2 / v3 format: lock.packages is a flat map of node_modules paths
-    if (lock.packages && typeof lock.packages === "object") {
-      for (const [pkgPath, pkgMeta] of Object.entries(lock.packages)) {
-        if (!pkgPath.startsWith("node_modules/")) continue;
-        if (!pkgMeta.version) continue;
-        // Strip the leading "node_modules/" (handles nested: node_modules/a/node_modules/b)
-        const name = pkgPath.replace(/^node_modules\//, "");
-        // Only store the top-level entry (no nesting slash after scope slash)
-        const parts = name.split("/");
-        const topName = parts[0].startsWith("@")
-          ? `${parts[0]}/${parts[1]}`
-          : parts[0];
-        if (!versions.has(topName)) {
-          versions.set(topName, pkgMeta.version);
-        }
+/**
+ * Load all packages from a lockfile (for --include-transitive).
+ * Reads from file path only (not used for remote lockfiles yet).
+ */
+function loadAllLockfilePackagesFromData(lock) {
+  const versions = new Map();
+
+  // v2 / v3 format: lock.packages is a flat map of node_modules paths
+  if (lock.packages && typeof lock.packages === "object") {
+    for (const [pkgPath, pkgMeta] of Object.entries(lock.packages)) {
+      if (!pkgPath.startsWith("node_modules/")) continue;
+      if (!pkgMeta.version) continue;
+      const name = pkgPath.replace(/^node_modules\//, "");
+      const parts = name.split("/");
+      const topName = parts[0].startsWith("@")
+        ? `${parts[0]}/${parts[1]}`
+        : parts[0];
+      if (!versions.has(topName)) {
+        versions.set(topName, pkgMeta.version);
       }
     }
-    // v1 format: lock.dependencies
-    else if (lock.dependencies && typeof lock.dependencies === "object") {
-      for (const [name, meta] of Object.entries(lock.dependencies)) {
-        if (meta.version) versions.set(name, meta.version);
+    return Array.from(versions.entries()).map(([name, version]) => ({
+      name,
+      version,
+    }));
+  }
+
+  // v1 format: need to traverse the tree
+  const seen = new Set();
+  function traverse(deps) {
+    if (!deps || typeof deps !== "object") return;
+    for (const [name, pkgMeta] of Object.entries(deps)) {
+      const key = `${name}@${pkgMeta.version}`;
+      if (!seen.has(key) && pkgMeta.version) {
+        seen.add(key);
+        versions.set(name, pkgMeta.version);
+      }
+      if (pkgMeta.dependencies) {
+        traverse(pkgMeta.dependencies);
       }
     }
+  }
+  traverse(lock.dependencies);
 
-    return versions;
+  return Array.from(versions.entries()).map(([name, version]) => ({
+    name,
+    version,
+  }));
+}
+
+/**
+ * Load all packages from a lockfile file path (for --include-transitive).
+ */
+function loadAllLockfilePackages(lockfilePath) {
+  if (!lockfilePath || !existsSync(lockfilePath)) return [];
+
+  try {
+    const raw = readFileSync(lockfilePath, "utf8");
+    const lock = JSON.parse(raw);
+    return loadAllLockfilePackagesFromData(lock);
   } catch (err) {
     logWarn(`Could not parse lockfile: ${err.message}`);
-    return new Map();
+    return [];
   }
 }
 
@@ -2192,6 +2290,46 @@ function printReport(results, pkg, showFindings = false) {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
+/**
+ * Check if a string is a URL (http:// or https://)
+ */
+function isUrl(str) {
+  return /^https?:\/\//i.test(str);
+}
+
+/**
+ * Convert a package.json URL to its corresponding package-lock.json URL
+ * E.g., https://raw.githubusercontent.com/.../package.json -> .../package-lock.json
+ */
+function getLockfileUrl(packageJsonUrl) {
+  return packageJsonUrl.replace(/package\.json$/, "package-lock.json");
+}
+
+/**
+ * Fetch and parse a lockfile from a URL
+ */
+async function fetchLockfileFromUrl(url) {
+  try {
+    logOk(`Fetching lockfile from ${url}...\n`);
+    const res = await fetch(url, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!res.ok) {
+      if (res.status === 404) {
+        return null; // Lockfile not found, which is acceptable
+      }
+      logWarn(`Failed to fetch lockfile (${res.status} ${res.statusText})`);
+      return null;
+    }
+    const text = await res.text();
+    return JSON.parse(text);
+  } catch (err) {
+    logWarn(`Failed to fetch or parse lockfile from URL: ${err.message}`);
+    return null;
+  }
+}
+
 async function main() {
   const opts = parseArgs(process.argv);
 
@@ -2199,7 +2337,7 @@ async function main() {
   if (!opts.packageJsonPath) {
     process.stderr.write(
       [
-        "Usage: node inspect-dependencies.js <path/to/package.json> [options]",
+        "Usage: node inspect-dependencies.js <path/to/package.json|url> [options]",
         "",
         "Options:",
         "  --include-dev          Include devDependencies",
@@ -2215,7 +2353,7 @@ async function main() {
         "                           5  = + rapid publish bursts + dormancy detection",
         "                           10 = + cadence baseline (recommended)",
         "                           20+= broader history, larger output",
-        "  --lockfile=<path>      Path to package-lock.json",
+        "  --lockfile=<path|url>  Path or URL to package-lock.json",
         "  --json                 Print the full JSON result to stdout",
         "  --output=<path>        Write JSON to a file (implies --json)",
         "  --html=<path>          Write a standalone HTML report to a file",
@@ -2229,20 +2367,49 @@ async function main() {
     process.exit(1);
   }
 
-  const pkgPath = resolve(opts.packageJsonPath);
-  if (!existsSync(pkgPath)) {
-    process.stderr.write(`Error: File not found: ${pkgPath}\n`);
-    process.exit(1);
-  }
-
+  const isUrlInput = isUrl(opts.packageJsonPath);
+  let pkgPath;
   let pkg;
-  try {
-    pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-  } catch (err) {
-    process.stderr.write(
-      `Error: Failed to parse ${basename(pkgPath)}: ${err.message}\n`,
-    );
-    process.exit(1);
+
+  if (isUrlInput) {
+    // Fetch package.json from URL
+    try {
+      logOk(`Fetching package.json from ${opts.packageJsonPath}...\n`);
+      const res = await fetch(opts.packageJsonPath, {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(30000),
+      });
+      if (!res.ok) {
+        process.stderr.write(
+          `Error: Failed to fetch URL (${res.status} ${res.statusText}): ${opts.packageJsonPath}\n`,
+        );
+        process.exit(1);
+      }
+      const text = await res.text();
+      pkg = JSON.parse(text);
+      pkgPath = opts.packageJsonPath; // Use URL as the path for display purposes
+    } catch (err) {
+      process.stderr.write(
+        `Error: Failed to fetch or parse package.json from URL: ${err.message}\n`,
+      );
+      process.exit(1);
+    }
+  } else {
+    // Read package.json from local file
+    pkgPath = resolve(opts.packageJsonPath);
+    if (!existsSync(pkgPath)) {
+      process.stderr.write(`Error: File not found: ${pkgPath}\n`);
+      process.exit(1);
+    }
+
+    try {
+      pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+    } catch (err) {
+      process.stderr.write(
+        `Error: Failed to parse ${basename(pkgPath)}: ${err.message}\n`,
+      );
+      process.exit(1);
+    }
   }
 
   // ── File cache initialisation ─────────────────────────────────────────────
@@ -2265,11 +2432,38 @@ async function main() {
   log(`Source:  ${pkgPath}`);
 
   // ── Load lockfile for exact version resolution ──────────────────────────────
-  const lockfilePath = opts.lockfilePath
-    ? resolve(opts.lockfilePath)
-    : resolve(dirname(pkgPath), "package-lock.json");
+  let lockfilePath;
+  let lockfileData = null;
 
-  const lockfileVersions = loadLockfileVersions(lockfilePath);
+  if (isUrlInput) {
+    // Handle remote lockfile
+    if (opts.lockfilePath) {
+      // User specified a lockfile path/URL
+      if (isUrl(opts.lockfilePath)) {
+        lockfilePath = opts.lockfilePath;
+        lockfileData = await fetchLockfileFromUrl(lockfilePath);
+      } else {
+        // User specified a local lockfile with a remote package.json
+        lockfilePath = resolve(opts.lockfilePath);
+        if (!existsSync(lockfilePath)) {
+          logWarn(`Lockfile not found at ${lockfilePath}`);
+        }
+      }
+    } else {
+      // Auto-detect lockfile from the same URL directory
+      lockfilePath = getLockfileUrl(pkgPath);
+      lockfileData = await fetchLockfileFromUrl(lockfilePath);
+    }
+  } else {
+    // Local file handling (existing behavior)
+    lockfilePath = opts.lockfilePath
+      ? resolve(opts.lockfilePath)
+      : resolve(dirname(pkgPath), "package-lock.json");
+  }
+
+  const lockfileVersions = lockfileData
+    ? parseLockfileVersions(lockfileData)
+    : loadLockfileVersions(lockfilePath);
   if (lockfileVersions.size > 0) {
     log(
       `Lockfile: ${lockfilePath} (${lockfileVersions.size} resolved versions)`,
@@ -2303,14 +2497,27 @@ async function main() {
 
   // ── Transitive dependencies from lockfile ─────────────────────────────────
   if (opts.includeTransitive) {
-    if (!existsSync(lockfilePath)) {
+    let allPkgs = [];
+
+    if (lockfileData) {
+      // Use remote lockfile data
+      allPkgs = loadAllLockfilePackagesFromData(lockfileData);
+    } else if (lockfilePath && existsSync(lockfilePath)) {
+      // Use local lockfile
+      allPkgs = loadAllLockfilePackages(lockfilePath);
+    }
+
+    if (allPkgs.length === 0) {
       logWarn(
-        "--include-transitive requires a lockfile; none found at " +
-          lockfilePath,
+        "--include-transitive requires a lockfile" +
+          (lockfileData === null && isUrlInput
+            ? " (lockfile not found at remote location)"
+            : !lockfilePath
+              ? ""
+              : `; none found at ${lockfilePath}`),
       );
     } else {
       const directNames = new Set(entries.map((e) => e.name));
-      const allPkgs = loadAllLockfilePackages(lockfilePath);
       let added = 0;
       for (const { name, version } of allPkgs) {
         // Skip packages already covered by a direct-dep entry so we don't

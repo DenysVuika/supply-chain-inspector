@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.0] — 2026-04-16
+
+### Added
+
+- **Remote URL support** — inspect dependencies from remote `package.json` URLs without cloning repositories
+  - Accepts any HTTP(S) URL as input (e.g., `https://raw.githubusercontent.com/user/repo/refs/heads/main/package.json`)
+  - Automatically fetches and parses remote `package.json` files with proper error handling and 30-second timeout
+  - Useful for CI/CD pipelines, quick audits, and inspecting public repositories
+- **Remote lockfile support** — automatic fetching of `package-lock.json` from remote URLs
+  - Auto-detects and fetches `package-lock.json` from the same directory as remote `package.json`
+  - Supports explicit remote lockfile URLs via `--lockfile=<url>`
+  - Enables `--include-transitive` functionality with remote URLs
+  - Mixed mode: use remote `package.json` with local lockfile or vice versa
+  - Graceful fallback when remote lockfile is not found (404 responses handled cleanly)
+- **Enhanced `--lockfile` option** — now accepts both local paths and remote URLs
+  - Format: `--lockfile=<path|url>`
+  - Works seamlessly with both local and remote `package.json` inputs
+
+### Changed
+
+- Refactored lockfile parsing logic for better code reuse:
+  - Extracted `parseLockfileVersions()` to parse lockfile data objects
+  - Extracted `loadAllLockfilePackagesFromData()` for transitive dependency extraction
+  - Both local and remote lockfiles now use the same parsing logic
+- Improved error messages for `--include-transitive` to provide context-specific guidance
+- Updated all documentation (script comments, usage messages, README) to reflect URL support
+
+---
+
 ## [0.1.1] — 2026-04-15
 
 ### Changed
@@ -68,5 +97,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shorter `nsci` after a global install
 - **`npx` support** — run directly from the npm registry with no prior install step
 
+[1.0.0]: https://github.com/denysvuika/supply-chain-inspector/compare/v0.1.1...v1.0.0
 [0.1.1]: https://github.com/denysvuika/supply-chain-inspector/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/denysvuika/supply-chain-inspector/releases/tag/v0.1.0
