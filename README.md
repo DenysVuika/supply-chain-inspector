@@ -47,6 +47,9 @@
 # Run directly via npx — no install needed
 npx supply-chain-inspector path/to/package.json
 
+# Or use a URL to a remote package.json
+npx supply-chain-inspector https://raw.githubusercontent.com/angular/angular/refs/heads/main/package.json
+
 # Or install globally once to get the short "nsci" alias
 npm install -g supply-chain-inspector
 nsci path/to/package.json
@@ -87,14 +90,20 @@ Inspecting 14 package(s) — concurrency: 5
 
 ```
 # Via npx (no install required)
-npx supply-chain-inspector <path/to/package.json> [options]
+npx supply-chain-inspector <path/to/package.json|url> [options]
 
 # Via short alias (requires: npm install -g supply-chain-inspector)
-nsci <path/to/package.json> [options]
+nsci <path/to/package.json|url> [options]
 
 # Or if running the script directly
-node inspect-dependencies.js <path/to/package.json> [options]
+node inspect-dependencies.js <path/to/package.json|url> [options]
 ```
+
+**Input can be:**
+- Local file path: `package.json` or `path/to/package.json`
+- Remote URL: `https://raw.githubusercontent.com/user/repo/refs/heads/main/package.json`
+
+**Note:** When using a remote URL, the lockfile (`package-lock.json`) is automatically fetched from the same directory. You can also explicitly specify a lockfile URL using `--lockfile=<url>`.
 
 ---
 
@@ -129,7 +138,7 @@ By default only `dependencies` (production) are scanned.
 | Flag | Description |
 |---|---|
 | `--concurrency=<N>` | Max parallel package fetches (default: `5`) |
-| `--lockfile=<path>` | Path to `package-lock.json` (auto-detected next to `package.json` if omitted) |
+| `--lockfile=<path\|url>` | Path or URL to `package-lock.json` (auto-detected next to `package.json` if omitted; for remote URLs, auto-detects `package-lock.json` in same directory) |
 | `--no-scorecard` | Skip OpenSSF Scorecard lookups (faster, useful offline) |
 | `--no-vulns` | Skip OSV.dev vulnerability lookups |
 
@@ -210,6 +219,21 @@ node inspect-dependencies.js package.json \
 
 # Generate an HTML report for easy sharing with your team
 node inspect-dependencies.js package.json --html=report.html
+
+# Inspect a remote package.json from GitHub (auto-detects remote lockfile)
+node inspect-dependencies.js https://raw.githubusercontent.com/angular/angular/refs/heads/main/package.json
+
+# Inspect remote package.json with full scan and HTML report
+node inspect-dependencies.js https://raw.githubusercontent.com/user/repo/main/package.json \
+  --include-dev --html=report.html
+
+# Inspect remote package.json with explicit remote lockfile URL
+node inspect-dependencies.js https://raw.githubusercontent.com/user/repo/main/package.json \
+  --lockfile=https://raw.githubusercontent.com/user/repo/main/package-lock.json
+
+# Inspect remote package.json with transitive dependencies (requires lockfile)
+node inspect-dependencies.js https://raw.githubusercontent.com/user/repo/main/package.json \
+  --include-transitive --findings
 
 # Full scan with HTML report, JSON data, and findings detail
 node inspect-dependencies.js package.json \
