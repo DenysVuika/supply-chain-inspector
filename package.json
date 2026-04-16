@@ -4,8 +4,8 @@
   "description": "Standalone, zero-dependency CLI for npm supply chain security analysis — vulnerability scanning, OpenSSF Scorecard, install-script detection, publisher history, and more.",
   "type": "module",
   "bin": {
-    "supply-chain-inspector": "./inspect-dependencies.js",
-    "nsci": "./inspect-dependencies.js"
+    "supply-chain-inspector": "inspect-dependencies.js",
+    "nsci": "inspect-dependencies.js"
   },
   "files": [
     "inspect-dependencies.js",
@@ -33,7 +33,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/denysvuika/supply-chain-inspector.git"
+    "url": "git+https://github.com/denysvuika/supply-chain-inspector.git"
   },
   "homepage": "https://github.com/denysvuika/supply-chain-inspector#readme",
   "bugs": {
