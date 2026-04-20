@@ -1,0 +1,7 @@
+- id: supply-chain-inspector
+  name: Supply Chain Inspector
+  description: Analyze npm dependencies for supply chain security risks (vulnerabilities, OpenSSF Scorecard, install-script detection, publisher history).
+  entry: nsci
+  language: node
+  files: ^package\.json$
+  pass_filenames: true
