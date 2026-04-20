@@ -1444,8 +1444,9 @@ function generateHtmlReport(results, pkg) {
           .slice(0, 10)
           .map((vh) => {
             const d = safeDate(vh.date);
+            const versionUrl = `https://www.npmjs.com/package/${encodeURIComponent(r.name)}/v/${encodeURIComponent(vh.version)}`;
             return (
-              `              <li><code>${he(vh.version)}</code>` +
+              `              <li><code><a href="${versionUrl}" target="_blank" rel="noopener noreferrer">${he(vh.version)}</a></code>` +
               `<span class="vdate">${d}</span></li>`
             );
           })
