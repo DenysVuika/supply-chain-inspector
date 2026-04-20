@@ -397,6 +397,39 @@ All three sources are **public and unauthenticated** — no API tokens required.
 
 ---
 
+## pre-commit Integration
+
+Supply Chain Inspector can be used as a [pre-commit](https://pre-commit.com)
+hook so it runs automatically whenever `package.json` is staged in any
+repository.
+
+### Setup
+
+Add the following to your repository's `.pre-commit-config.yaml`:
+
+```yaml
+repos:
+  - repo: https://github.com/DenysVuika/supply-chain-inspector
+    rev: v1.0.0  # replace with the desired tag or commit SHA
+    hooks:
+      - id: supply-chain-inspector
+```
+
+Then install the hooks (if you haven't already):
+
+```bash
+pre-commit install
+```
+
+### How it works
+
+- The hook triggers only when `package.json` is part of the staged files.
+- pre-commit installs the package via npm into an isolated environment — no global install required.
+- The `package.json` path is passed automatically as an argument.
+- In a **monorepo** with multiple `package.json` files, each staged one is scanned independently.
+
+---
+
 ## CI Integration
 
 The script exits with code `0` regardless of findings (advisory mode only). Pipe
