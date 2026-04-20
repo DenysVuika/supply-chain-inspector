@@ -213,6 +213,7 @@ function parseArgs(argv) {
     noCache: false,
     includeTransitive: false,
     showFindings: false,
+    failOn: "critical", // 'low' | 'medium' | 'high' | 'critical'
   };
 
   for (const arg of args) {
@@ -257,6 +258,13 @@ function parseArgs(argv) {
     if (arg.startsWith("--version-history=")) {
       const n = parseInt(arg.split("=")[1], 10);
       if (!isNaN(n) && n >= 2) opts.versionHistory = n;
+      continue;
+    }
+    if (arg.startsWith("--fail-on=")) {
+      const level = arg.split("=")[1].toLowerCase();
+      if (["low", "medium", "high", "critical"].includes(level)) {
+        opts.failOn = level;
+      }
       continue;
     }
     if (arg.startsWith("--lockfile=")) {
@@ -1444,8 +1452,9 @@ function generateHtmlReport(results, pkg) {
           .slice(0, 10)
           .map((vh) => {
             const d = safeDate(vh.date);
+            const versionUrl = `https://www.npmjs.com/package/${encodeURIComponent(r.name)}/v/${encodeURIComponent(vh.version)}`;
             return (
-              `              <li><code>${he(vh.version)}</code>` +
+              `              <li><code><a href="${versionUrl}" target="_blank" rel="noopener noreferrer">${he(vh.version)}</a></code>` +
               `<span class="vdate">${d}</span></li>`
             );
           })
@@ -2552,6 +2561,65 @@ async function main() {
       `${C.dim}  Tip: run with --json to print full data, or --output=<file> to save it.${C.reset}`,
     );
     log("");
+  }
+
+  // ── Exit code based on --fail-on threshold ────────────────────────────────
+  const severityLevels = ["low", "medium", "high", "critical"];
+  const failThreshold = severityLevels.indexOf(opts.failOn);
+
+  let shouldFail = false;
+  const failedPackages = [];
+
+  for (const result of results) {
+    if (result.vulnerabilities && result.vulnerabilities.summary) {
+      const summary = result.vulnerabilities.summary;
+
+      // Check each severity level at or above the threshold
+      for (let i = failThreshold; i < severityLevels.length; i++) {
+        const level = severityLevels[i];
+        if (summary[level] > 0) {
+          shouldFail = true;
+          failedPackages.push({
+            name: result.name,
+            level: level,
+            count: summary[level],
+          });
+          break;
+        }
+      }
+    }
+  }
+
+  if (shouldFail) {
+    log("");
+    const boxWidth = 79;
+    const topLine = "╔" + "═".repeat(boxWidth - 2) + "╗";
+    const bottomLine = "╚" + "═".repeat(boxWidth - 2) + "╝";
+    const message = `SECURITY FAILURE: Vulnerabilities found at or above '${opts.failOn}' threshold`;
+    const padding = " ".repeat(boxWidth - 2 - message.length - 2);
+    const contentLine = `║  ${message}${padding}║`;
+
+    log(`${C.bred}${topLine}${C.reset}`);
+    log(`${C.bred}${contentLine}${C.reset}`);
+    log(`${C.bred}${bottomLine}${C.reset}`);
+    log("");
+    for (const pkg of failedPackages.slice(0, 5)) {
+      const colorMap = {
+        critical: C.bred,
+        high: C.red,
+        medium: C.yellow,
+        low: C.dim,
+      };
+      const color = colorMap[pkg.level] || C.red;
+      logErr(
+        `  ${C.red}▪${C.reset} ${C.bold}${pkg.name}${C.reset}${C.dim}:${C.reset} ${color}${pkg.count} ${pkg.level.toUpperCase()}${C.reset}`,
+      );
+    }
+    if (failedPackages.length > 5) {
+      log(`  ${C.dim}... and ${failedPackages.length - 5} more${C.reset}`);
+    }
+    log("");
+    process.exit(1);
   }
 }
 
