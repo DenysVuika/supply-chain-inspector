@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- Version numbers in HTML report "Recent Version History" are now clickable links to corresponding NPM package version pages
+
+---
+
 ## [1.0.0] — 2026-04-16
 
 ### Added
