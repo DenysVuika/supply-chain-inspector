@@ -429,6 +429,7 @@ repos:
     rev: v1.0.0  # replace with the desired tag or commit SHA
     hooks:
       - id: supply-chain-inspector
+        args: [--fail-on=high] # Optional: fail the commit if any high or critical vulnerabilities are found (default: critical)
 ```
 
 Then install the hooks (if you haven't already):
