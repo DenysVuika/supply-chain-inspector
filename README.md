@@ -163,6 +163,7 @@ an early refresh:
 | Flag | Description |
 |---|---|
 | `--findings` | Show per-package findings detail below the summary table. By default only the table is shown; a one-line hint indicates how many packages have signals. |
+| `--fail-on=<level>` | Exit with code 1 if vulnerabilities at or above the specified severity are found. Valid levels: `low`, `medium`, `high`, `critical` (default: `critical`). When set to `low`, any vulnerability will cause a failure. When set to `critical`, only critical vulnerabilities trigger a failure. |
 
 ### Output
 
@@ -253,6 +254,21 @@ node inspect-dependencies.js package.json --concurrency=10
 
 # CI-friendly: plain text, no color, output to log file
 NO_COLOR=1 node inspect-dependencies.js package.json 2>&1 | tee security-report.txt
+
+# Fail the build if any critical vulnerabilities are found (default behavior)
+node inspect-dependencies.js package.json --fail-on=critical
+
+# Fail the build on high or critical vulnerabilities
+node inspect-dependencies.js package.json --fail-on=high
+
+# Fail the build on any vulnerability (low, medium, high, or critical)
+node inspect-dependencies.js package.json --fail-on=low
+
+# CI pipeline with strict security policy (fail on medium+)
+node inspect-dependencies.js package.json \
+  --include-dev --include-peer \
+  --fail-on=medium \
+  --html=report.html
 
 # Force fresh data, bypassing any cached responses
 node inspect-dependencies.js package.json --no-cache
@@ -399,15 +415,18 @@ All three sources are **public and unauthenticated** — no API tokens required.
 
 ## CI Integration
 
-The script exits with code `0` regardless of findings (advisory mode only). Pipe
-stderr to your log system and optionally save the JSON artifact.
+By default, the script exits with code `0` regardless of findings (advisory mode).
+Use `--fail-on=<level>` to make the script exit with code `1` when vulnerabilities
+at or above the specified severity threshold are found, enabling CI pipeline failures
+on security issues.
 
 ```yaml
-# GitHub Actions example
+# GitHub Actions example — fail on any high or critical vulnerabilities
 - name: Supply chain scan
   run: |
     NO_COLOR=1 node inspect-dependencies.js package.json \
       --findings \
+      --fail-on=high \
       --output=supply-chain.json \
       --html=supply-chain.html \
       2>&1 | tee supply-chain-report.txt

@@ -9,9 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--fail-on` option** — exit with code 1 when vulnerabilities at or above the specified severity threshold are found
+  - Accepts `low`, `medium`, `high`, or `critical` (default: `critical`)
+  - Enables CI pipeline failures based on security policy
+  - When set to `low`, any vulnerability will cause failure; when set to `critical`, only critical vulnerabilities trigger failure
+  - Displays a clear, boxed failure message listing affected packages with severity badges
+
 ### Changed
 
 - Version numbers in HTML report "Recent Version History" are now clickable links to corresponding NPM package version pages
+- CI Integration documentation updated to demonstrate `--fail-on` usage for pipeline security gates
 
 ---
 
