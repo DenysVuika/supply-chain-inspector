@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [1.1.0] — 2026-04-20
+
 ### Added
 
 - **`--fail-on` option** — exit with code 1 when vulnerabilities at or above the specified severity threshold are found
@@ -114,6 +118,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shorter `nsci` after a global install
 - **`npx` support** — run directly from the npm registry with no prior install step
 
+[1.1.0]: https://github.com/denysvuika/supply-chain-inspector/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/denysvuika/supply-chain-inspector/compare/v0.1.1...v1.0.0
 [0.1.1]: https://github.com/denysvuika/supply-chain-inspector/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/denysvuika/supply-chain-inspector/releases/tag/v0.1.0
