@@ -155,6 +155,8 @@ const _scriptDir = dirname(fileURLToPath(import.meta.url));
 const NPM_REGISTRY = "https://registry.npmjs.org";
 const OSV_API = "https://api.osv.dev/v1";
 const SCORECARD_API = "https://api.scorecard.dev";
+const KEV_URL =
+  "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
 
 // ── File-cache TTLs ───────────────────────────────────────────────────────────
 // npm registry docs change when new versions are published → refresh every 6 h.
@@ -163,6 +165,7 @@ const SCORECARD_API = "https://api.scorecard.dev";
 const TTL_NPM = 6 * 60 * 60 * 1000; //  6 hours
 const TTL_OSV = 6 * 60 * 60 * 1000; //  6 hours
 const TTL_SCORECARD = 24 * 60 * 60 * 1000; // 24 hours
+const TTL_KEV = 24 * 60 * 60 * 1000; // 24 hours — CISA updates ~weekly
 
 const LIFECYCLE_KEYS = [
   "preinstall",
@@ -209,6 +212,7 @@ function parseArgs(argv) {
     json: false,
     skipScorecard: false,
     skipVulns: false,
+    skipKev: false,
     cacheDir: null, // null → resolved to default in main()
     noCache: false,
     includeTransitive: false,
@@ -247,6 +251,10 @@ function parseArgs(argv) {
     }
     if (arg === "--no-vulns") {
       opts.skipVulns = true;
+      continue;
+    }
+    if (arg === "--no-kev") {
+      opts.skipKev = true;
       continue;
     }
 
@@ -871,6 +879,78 @@ async function fetchVulnerabilities(name, version, ecosystem = "npm") {
   }
 }
 
+// ─── CISA KEV (Known Exploited Vulnerabilities) ───────────────────────────────
+
+/**
+ * Fetch the full CISA KEV catalog and cache it for 24 h.
+ * Returns an array of KEV entry objects, or [] on error.
+ *
+ * Each entry has:
+ *   cveID, vendorProject, product, vulnerabilityName,
+ *   dateAdded, shortDescription, requiredAction, dueDate,
+ *   knownRansomwareCampaignUse, notes
+ */
+async function fetchKEVList() {
+  const cacheKey = "kev_catalog";
+  const cached = readFromCache(cacheKey, TTL_KEV);
+  if (cached) return cached;
+
+  try {
+    const res = await fetch(KEV_URL, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!res.ok) {
+      logErr(`KEV catalog fetch failed: ${res.status} ${res.statusText}`);
+      return [];
+    }
+    const data = await res.json();
+    const list = data.vulnerabilities ?? [];
+    writeToCache(cacheKey, list);
+    return list;
+  } catch (err) {
+    logErr(`KEV catalog fetch error: ${err.message}`);
+    return [];
+  }
+}
+
+/**
+ * Cross-reference all vulnerability IDs found in the scan results against the
+ * CISA KEV catalog.  Checks both the primary OSV id (e.g. GHSA-xxxx) and all
+ * aliases (usually includes the canonical CVE-xxxx identifier).
+ *
+ * Returns an array of match objects:
+ *   { packageName, version, vuln, kev }
+ */
+function matchKEVs(results, kevList) {
+  if (!kevList || kevList.length === 0) return [];
+
+  // Build a fast lookup: CVE-ID → KEV entry
+  const kevMap = new Map(kevList.map((k) => [k.cveID, k]));
+  const matches = [];
+
+  for (const r of results) {
+    const vulns = r.vulnerabilities?.list ?? [];
+    for (const v of vulns) {
+      const ids = [v.id, ...(v.aliases ?? [])];
+      for (const id of ids) {
+        const kev = kevMap.get(id);
+        if (kev) {
+          matches.push({
+            packageName: r.name,
+            version: r.resolvedVersion ?? r.versionSpec ?? "?",
+            vuln: v,
+            kev,
+          });
+          break; // don't report the same vuln twice for the same package
+        }
+      }
+    }
+  }
+
+  return matches;
+}
+
 function classifyCvssSeverity(vuln) {
   // Try CVSS v4 or v3 score
   for (const s of vuln.severity ?? []) {
@@ -1209,7 +1289,7 @@ function buildNotFoundResult(name, versionSpec, scope, lockfileVersion) {
  * @param {object} pkg      Parsed package.json of the scanned project
  * @returns {string}        Complete HTML document as a string
  */
-function generateHtmlReport(results, pkg) {
+function generateHtmlReport(results, pkg, kevMatches = []) {
   const pkgLabel =
     `${pkg.name ?? "(unnamed)"}` + (pkg.version ? `@${pkg.version}` : "");
 
@@ -1540,11 +1620,65 @@ function generateHtmlReport(results, pkg) {
     totalChips.push(
       `<span class="total-chip clean">&#x2713; all ${results.length} package(s) clean</span>`,
     );
+  if (kevMatches.length > 0)
+    totalChips.push(
+      `<span class="total-chip kev">&#x25B2; ${kevMatches.length} KEV match${kevMatches.length !== 1 ? "es" : ""}</span>`,
+    );
 
   const findingsSection =
     findings.length > 0
       ? `  <section>\n    <h2>Findings (${findings.length})</h2>\n${findingCards}\n  </section>`
       : `  <section>\n    <p class="all-clean">&#x2713; No security issues detected across all ${results.length} package(s).</p>\n  </section>`;
+
+  // ── KEV alert section ────────────────────────────────────────────────────
+  const kevSection =
+    kevMatches.length === 0
+      ? ""
+      : (() => {
+          const items = kevMatches
+            .map(({ packageName, version, vuln, kev }) => {
+              const ransomware =
+                (kev.knownRansomwareCampaignUse ?? "").toLowerCase() === "known"
+                  ? `<div class="kev-ransomware">&#x26A0; Known ransomware campaign use</div>`
+                  : "";
+              const dueStr = kev.dueDate
+                ? ` &middot; Due: <strong>${he(kev.dueDate)}</strong>`
+                : "";
+              return (
+                `    <li class="kev-item">\n` +
+                `      <div class="kev-item-header">\n` +
+                `        <span class="kev-pkg-name">${he(packageName)}</span>\n` +
+                `        <span class="kev-pkg-ver">${he(version)}</span>\n` +
+                `        ${sevBadgeHtml(vuln.severity)}\n` +
+                `        <span class="kev-cve">${he(vuln.id)}</span>\n` +
+                `      </div>\n` +
+                `      <div class="kev-meta">\n` +
+                `        <span class="kev-meta-label">Summary</span>\n` +
+                `        <span class="kev-meta-value">${he(vuln.summary)}</span>\n` +
+                `        <span class="kev-meta-label">Vendor / Product</span>\n` +
+                `        <span class="kev-meta-value">${he(kev.vendorProject)} &#x2014; ${he(kev.product)}</span>\n` +
+                `        <span class="kev-meta-label">Added to KEV</span>\n` +
+                `        <span class="kev-meta-value">${he(kev.dateAdded)}${dueStr}</span>\n` +
+                `        <span class="kev-meta-label">Required action</span>\n` +
+                `        <span class="kev-meta-value">${he(kev.requiredAction ?? "—")}</span>\n` +
+                `      </div>\n` +
+                `      ${ransomware}\n` +
+                `      <a class="kev-catalog-link" href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog" target="_blank" rel="noopener">&#x2197; CISA KEV Catalog</a>\n` +
+                `    </li>`
+              );
+            })
+            .join("\n");
+          return (
+            `  <section class="kev-section">\n` +
+            `    <div class="kev-alert-banner">\n` +
+            `      <span class="kev-icon">&#x26A0;&#xFE0F;</span>\n` +
+            `      <span>KNOWN EXPLOITED VULNERABILITIES &mdash; Active exploitation confirmed by CISA</span>\n` +
+            `      <span class="kev-count">${kevMatches.length} match${kevMatches.length !== 1 ? "es" : ""}</span>\n` +
+            `    </div>\n` +
+            `    <ul class="kev-list">\n${items}\n    </ul>\n` +
+            `  </section>`
+          );
+        })();
 
   // ── Assemble the full HTML document ──────────────────────────────────────
   return `<!DOCTYPE html>
@@ -1922,6 +2056,87 @@ function generateHtmlReport(results, pkg) {
     .meta-table th { color: var(--dim); font-weight: 500; width: 130px; vertical-align: top; }
     .meta-table td { color: var(--text); }
 
+    /* ── KEV alert section ── */
+    .kev-section {
+      margin-top: 28px;
+    }
+    .kev-alert-banner {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 18px;
+      background: #1a0505;
+      border: 1px solid #ff4444;
+      border-radius: var(--radius) var(--radius) 0 0;
+      color: #ff4444;
+      font-weight: 700;
+      font-size: 0.88rem;
+    }
+    .kev-alert-banner .kev-icon { font-size: 1.1rem; }
+    .kev-alert-banner .kev-count {
+      margin-left: auto;
+      font-size: 0.75rem;
+      background: #ff4444;
+      color: #fff;
+      padding: 2px 10px;
+      border-radius: 12px;
+    }
+    .kev-list { list-style: none; display: flex; flex-direction: column; gap: 0; }
+    .kev-item {
+      background: #120303;
+      border: 1px solid #ff4444;
+      border-top: none;
+      padding: 12px 18px;
+      font-size: 0.83rem;
+    }
+    .kev-item:last-child { border-radius: 0 0 var(--radius) var(--radius); }
+    .kev-item-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+      flex-wrap: wrap;
+    }
+    .kev-pkg-name { font-weight: 700; color: #ff4444; font-size: 0.92rem; }
+    .kev-pkg-ver {
+      font-size: 0.75rem;
+      color: var(--dim);
+      font-family: "SFMono-Regular", Consolas, monospace;
+      background: var(--bg3);
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
+    .kev-cve { font-weight: 600; color: var(--bright); }
+    .kev-meta {
+      display: grid;
+      grid-template-columns: 140px 1fr;
+      gap: 3px 8px;
+      margin-top: 6px;
+      font-size: 0.79rem;
+    }
+    .kev-meta-label { color: var(--dim); font-weight: 500; }
+    .kev-meta-value { color: var(--text); }
+    .kev-ransomware {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      margin-top: 7px;
+      padding: 2px 10px;
+      background: #200505;
+      border: 1px solid #ff4444;
+      border-radius: 10px;
+      color: #ff4444;
+      font-size: 0.72rem;
+      font-weight: 700;
+    }
+    .kev-catalog-link {
+      display: inline-block;
+      margin-top: 7px;
+      font-size: 0.75rem;
+      color: var(--blue);
+    }
+    .total-chip.kev { color: #ff4444; background: #200505; border-color: #ff4444; }
+
     /* ── Footer ── */
     .site-footer {
       margin-top: 48px;
@@ -1974,13 +2189,15 @@ ${tableRows}
     </div>
   </section>
 
+${kevSection}
+
 ${findingsSection}
 
 </div>
 
 <footer class="site-footer">
   <span>Generated by <strong>inspect-dependencies.js</strong></span>
-  <span>Data sources: npm Registry &#x00B7; OSV.dev &#x00B7; OpenSSF Scorecard</span>
+  <span>Data sources: npm Registry &#x00B7; OSV.dev &#x00B7; OpenSSF Scorecard &#x00B7; CISA KEV</span>
 </footer>
 
 </body>
@@ -2003,7 +2220,7 @@ ${findingsSection}
  *       └ Scorecard · Check: 0/10
  *   ━━━ footer totals ━━━
  */
-function printReport(results, pkg, showFindings = false) {
+function printReport(results, pkg, showFindings = false, kevMatches = []) {
   const W = Math.min(process.stderr.columns ?? 80, 90);
   const hr = (ch = "─") => ch.repeat(W);
   const HR = (ch = "━") => ch.repeat(W);
@@ -2191,6 +2408,50 @@ function printReport(results, pkg, showFindings = false) {
     }
   }
 
+  // ── CISA KEV alert section ─────────────────────────────────────────────────
+  if (kevMatches.length > 0) {
+    log("");
+    const kevHr = `${C.bred}${hr()}${C.reset}`;
+    log(kevHr);
+    log(
+      `${C.bred}  ▲ KNOWN EXPLOITED VULNERABILITIES (CISA KEV)${C.reset}` +
+        `  ·  ${C.bred}${kevMatches.length} match${kevMatches.length !== 1 ? "es" : ""}${C.reset} with actively exploited CVEs`,
+    );
+    log(kevHr);
+
+    // Fixed label column width — longest label is "Vendor / Product:" (17 chars)
+    // We pad each label to 17 chars then add 2 spaces of gutter.
+    const KEV_LAB = 17 + 2; // 19 visible chars total
+    const label = (txt) =>
+      `    ${C.yellow}${txt}${C.reset}${" ".repeat(KEV_LAB - txt.length)}`;
+
+    for (const { packageName, version, vuln, kev } of kevMatches) {
+      log("");
+      log(
+        `  ${C.bred}● ${packageName}@${version}${C.reset}` +
+          `  ${sevBadge(vuln.severity)}  ${C.bold}${vuln.id}${C.reset}`,
+      );
+      log(`    ${C.dim}${truncate(vuln.summary, W - 6)}${C.reset}`);
+      log(`${label("Vendor / Product:")}${kev.vendorProject} — ${kev.product}`);
+      log(
+        `${label("Added to KEV:")}${kev.dateAdded}` +
+          (kev.dueDate ? `  ·  Due: ${kev.dueDate}` : ""),
+      );
+      log(
+        `${label("Required action:")}${truncate(kev.requiredAction ?? "—", W - KEV_LAB - 4)}`,
+      );
+      if ((kev.knownRansomwareCampaignUse ?? "").toLowerCase() === "known") {
+        log(`    ${C.bred}⚠  Known ransomware campaign use${C.reset}`);
+      }
+      log(
+        `    ${C.cyan}https://www.cisa.gov/known-exploited-vulnerabilities-catalog${C.reset}`,
+      );
+    }
+
+    log("");
+    log(kevHr);
+  }
+
   // ── Footer totals ─────────────────────────────────────────────────────────
   const totals = results.reduce(
     (acc, r) => {
@@ -2221,6 +2482,10 @@ function printReport(results, pkg, showFindings = false) {
   if (footerChips.length === 0)
     footerChips.push(
       `${C.bgreen}✓ all ${results.length} package(s) clean${C.reset}`,
+    );
+  if (kevMatches.length > 0)
+    footerChips.push(
+      `${C.bred}▲ ${kevMatches.length} KEV match${kevMatches.length !== 1 ? "es" : ""}${C.reset}`,
     );
 
   log("");
@@ -2300,6 +2565,7 @@ async function main() {
         "  --html=<path>          Write a standalone HTML report to a file",
         "  --no-scorecard         Skip OpenSSF Scorecard lookups",
         "  --no-vulns             Skip OSV.dev vulnerability lookups",
+        "  --no-kev               Skip CISA KEV cross-reference (implies no KEV section)",
         "  --cache-dir=<path>     File-cache directory (default: .cache/ next to this script)",
         "  --no-cache             Disable the file cache entirely (always fetch live data)",
         "",
@@ -2508,15 +2774,37 @@ async function main() {
 
   const results = await runWithConcurrency(tasks, opts.concurrency);
 
+  // ── CISA KEV cross-reference ─────────────────────────────────────────────
+  let kevMatches = [];
+  if (!opts.skipVulns && !opts.skipKev) {
+    log(`\n${C.dim}Fetching CISA KEV catalog...${C.reset}`);
+    const kevList = await fetchKEVList();
+    if (kevList.length > 0) {
+      kevMatches = matchKEVs(results, kevList);
+      if (kevMatches.length > 0) {
+        logWarn(
+          `${kevMatches.length} KEV match${kevMatches.length !== 1 ? "es" : ""} found — ` +
+            `actively exploited CVE${kevMatches.length !== 1 ? "s" : ""} in your dependencies!`,
+        );
+      } else {
+        logOk(`KEV check complete — no actively exploited CVEs found.`);
+      }
+    }
+  }
+
   // ── Summary ─────────────────────────────────────────────────────────────────
   // ── Security report ───────────────────────────────────────────────────────
-  printReport(results, pkg, opts.showFindings);
+  printReport(results, pkg, opts.showFindings, kevMatches);
 
   // ── HTML report (opt-in via --html=<path>) ────────────────────────────────
   if (opts.html) {
     const htmlPath = resolve(opts.html);
     try {
-      writeFileSync(htmlPath, generateHtmlReport(results, pkg), "utf8");
+      writeFileSync(
+        htmlPath,
+        generateHtmlReport(results, pkg, kevMatches),
+        "utf8",
+      );
       log(`${C.dim}  HTML report written to: ${opts.html}${C.reset}`);
     } catch (err) {
       logErr(`Failed to write HTML report: ${err.message}`);
@@ -2619,6 +2907,38 @@ async function main() {
       log(`  ${C.dim}... and ${failedPackages.length - 5} more${C.reset}`);
     }
     log("");
+  }
+
+  // ── KEV hard-fail (always triggers when matches exist, unless --no-kev) ───
+  // A KEV entry means active real-world exploitation confirmed by CISA.
+  // This is independent of --fail-on: even a MEDIUM KEV is more dangerous
+  // than a theoretical CRITICAL that nobody is currently exploiting.
+  if (kevMatches.length > 0) {
+    log("");
+    const boxWidth = 79;
+    const topLine = "╔" + "═".repeat(boxWidth - 2) + "╗";
+    const bottomLine = "╚" + "═".repeat(boxWidth - 2) + "╝";
+    const n = kevMatches.length;
+    const message = `SECURITY FAILURE: ${n} actively exploited CVE${n !== 1 ? "s" : ""} (CISA KEV) in your dependencies`;
+    const padding = " ".repeat(Math.max(0, boxWidth - 2 - message.length - 2));
+    const contentLine = `║  ${message}${padding}║`;
+
+    log(`${C.bred}${topLine}${C.reset}`);
+    log(`${C.bred}${contentLine}${C.reset}`);
+    log(`${C.bred}${bottomLine}${C.reset}`);
+    log("");
+    for (const { packageName, version, vuln, kev } of kevMatches) {
+      logErr(
+        `  ${C.red}▪${C.reset} ${C.bold}${packageName}@${version}${C.reset}` +
+          `${C.dim}:${C.reset} ${C.bred}${vuln.id}${C.reset}` +
+          `  ${C.dim}(added to KEV: ${kev.dateAdded})${C.reset}`,
+      );
+    }
+    log("");
+    shouldFail = true;
+  }
+
+  if (shouldFail) {
     process.exit(1);
   }
 }
