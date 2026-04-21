@@ -11,6 +11,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.0] — 2026-05-01
+
+### Added
+
+- **CISA KEV cross-reference** — discovered CVEs are automatically matched against the
+  [CISA Known Exploited Vulnerabilities catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog);
+  results only appear when at least one match is found
+
+- **KEV alert in terminal and HTML report** — when KEV matches are detected, a prominent
+  warning is shown listing each affected package with its CVE ID, CISA vendor/product,
+  dates, required action, ransomware campaign flag, and a direct link to the catalog
+
+- **`--no-kev` flag** — opt out of the KEV check entirely, including in CI
+
+- **KEV hard-fail** — any KEV match exits with code `1`, regardless of `--fail-on`;
+  both failure summaries are shown together when both conditions trigger in the same run
+
+- **`▲ N KEV matches` counter** — appended to the footer totals line and the HTML report summary banner
+
+### Changed
+
+- CI Integration documentation updated to reflect KEV as a second hard-fail path alongside `--fail-on`
+
+---
+
 ## [1.1.0] — 2026-04-20
 
 ### Added
@@ -118,6 +143,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shorter `nsci` after a global install
 - **`npx` support** — run directly from the npm registry with no prior install step
 
+[1.2.0]: https://github.com/denysvuika/supply-chain-inspector/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/denysvuika/supply-chain-inspector/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/denysvuika/supply-chain-inspector/compare/v0.1.1...v1.0.0
 [0.1.1]: https://github.com/denysvuika/supply-chain-inspector/compare/v0.1.0...v0.1.1
