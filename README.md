@@ -15,6 +15,11 @@
 
 - **Vulnerability scanning** via [OSV.dev](https://osv.dev) — known CVEs and
   security advisories, severity-ranked (Critical / High / Medium / Low)
+- **CISA KEV cross-reference** — automatically checks every discovered CVE against
+  the [CISA Known Exploited Vulnerabilities catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog),
+  highlighting packages with actively exploited vulnerabilities in a dedicated alert
+  section (CLI and HTML), with vendor, product, due date, required action, and
+  ransomware campaign flag
 - **Project health scoring** via [OpenSSF Scorecard](https://scorecard.dev) — 10+
   automated checks covering code review, branch protection, signed releases, and more
 - **Install-script detection** — flags packages that run `preinstall`, `postinstall`,
@@ -27,7 +32,7 @@
 - **Lockfile-aware** — auto-detects `package-lock.json` for exact pinned versions
   instead of resolving from semver ranges
 - **File cache** — API responses are cached to disk (npm: 6 h, OSV: 6 h,
-  Scorecard: 24 h) so repeated runs are fast and network-friendly
+  Scorecard: 24 h, CISA KEV: 24 h) so repeated runs are fast and network-friendly
 - **In-flight deduplication** — concurrent workers that request the same package
   or repo share one HTTP request instead of firing duplicates
 - **Zero dependencies** — uses Node.js 18+ built-in `fetch`; nothing to install
@@ -141,6 +146,7 @@ By default only `dependencies` (production) are scanned.
 | `--lockfile=<path\|url>` | Path or URL to `package-lock.json` (auto-detected next to `package.json` if omitted; for remote URLs, auto-detects `package-lock.json` in same directory) |
 | `--no-scorecard` | Skip OpenSSF Scorecard lookups (faster, useful offline) |
 | `--no-vulns` | Skip OSV.dev vulnerability lookups |
+| `--no-kev` | Skip the CISA KEV cross-reference (also skipped automatically when `--no-vulns` is set, since there are no CVEs to match) |
 
 ### Cache
 
@@ -157,6 +163,7 @@ an early refresh:
 | npm Registry | 6 h | Refreshed when new versions are published |
 | OSV.dev | 6 h | Vulnerability data is stable within hours |
 | OpenSSF Scorecard | 24 h | Scores are recomputed weekly by OpenSSF |
+| CISA KEV | 24 h | Catalog is updated weekly; daily refresh is sufficient |
 
 ### Report
 
@@ -164,6 +171,7 @@ an early refresh:
 |---|---|
 | `--findings` | Show per-package findings detail below the summary table. By default only the table is shown; a one-line hint indicates how many packages have signals. |
 | `--fail-on=<level>` | Exit with code 1 if vulnerabilities at or above the specified severity are found. Valid levels: `low`, `medium`, `high`, `critical` (default: `critical`). When set to `low`, any vulnerability will cause a failure. When set to `critical`, only critical vulnerabilities trigger a failure. |
+| `--no-kev` | Skip the CISA KEV cross-reference entirely. **Without this flag, any KEV match always causes exit code 1**, regardless of `--fail-on` level — see [KEV Alert](#kev-alert). |
 
 ### Output
 
@@ -296,6 +304,19 @@ of the following signals:
 | `no_repo` | No source repository URL found in the npm registry entry |
 | `not_found` | Package could not be found on the npm registry at all |
 
+Separately from the per-package findings, a **KEV alert section** is shown at the
+bottom of the report (above the footer totals in the CLI; above the Findings section
+in the HTML report) whenever one or more discovered CVEs appear in the CISA Known
+Exploited Vulnerabilities catalog. Each KEV match shows:
+
+- Package name and version
+- CVE ID and severity badge
+- Vendor / product as listed by CISA
+- Date the CVE was added to the catalog and the remediation due date
+- Required action text from CISA
+- A ransomware campaign flag when applicable
+- Direct link to the CISA KEV catalog
+
 ---
 
 ## JSON Output Structure
@@ -408,8 +429,68 @@ Each element of the output array represents one inspected package:
 | npm Registry | `https://registry.npmjs.org` | Package metadata, version history, maintainers, install scripts, tarball integrity |
 | OSV.dev | `https://api.osv.dev/v1/query` | Known CVEs and security advisories |
 | OpenSSF Scorecard | `https://api.scorecard.dev` | Project health (17 automated checks) |
+| CISA KEV | `https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json` | Confirmed actively exploited vulnerabilities |
 
-All three sources are **public and unauthenticated** — no API tokens required.
+All four sources are **public and unauthenticated** — no API tokens required.
+
+---
+
+## KEV Alert
+
+After all packages have been scanned, Supply Chain Inspector cross-references
+every discovered CVE (including OSV aliases such as `GHSA-*`) against the
+[CISA Known Exploited Vulnerabilities (KEV) catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog).
+The KEV catalog lists vulnerabilities confirmed by CISA to be actively exploited
+in the wild, often with a federal remediation due date.
+
+When matches are found:
+
+- **CLI** — a bright-red `▲ KNOWN EXPLOITED VULNERABILITIES` banner is printed
+  below the Findings section with per-match detail and a direct link to the catalog.
+  The footer chip also shows `▲ N KEV matches`.
+- **HTML report** — a dedicated red alert card section appears above Findings,
+  with a grid of metadata per match (vendor, product, dates, required action,
+  ransomware flag).
+
+Example CLI output when matches exist:
+
+```
+▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+  ▲ KNOWN EXPLOITED VULNERABILITIES (CISA KEV)  ·  2 match(es) actively exploited in the wild
+▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+
+  ● systeminformation@5.3.0  [MEDIUM  ]  GHSA-2m8v-572m-ff2v
+    Command Injection Vulnerability
+    Vendor / Product:  Npm package — System Information Library for Node.JS
+    Added to KEV:      2022-01-18  ·  Due: 2022-02-01
+    Required action:   Apply updates per vendor instructions.
+    https://www.cisa.gov/known-exploited-vulnerabilities-catalog
+
+  ● mongo-express@0.53.0  [MEDIUM  ]  GHSA-h47j-hc6x-h3qq
+    Remote Code Execution Vulnerability in NPM mongo-express
+    Vendor / Product:  MongoDB — mongo-express
+    Added to KEV:      2021-12-10  ·  Due: 2022-06-10
+    Required action:   Apply updates per vendor instructions.
+    https://www.cisa.gov/known-exploited-vulnerabilities-catalog
+```
+
+### Exit behaviour
+
+KEV matches **always** cause the script to exit with code `1`, independently of
+`--fail-on`. This is intentional: a CVE in the KEV catalog has confirmed
+real-world exploitation right now, making it more urgent than any theoretical
+severity rating. The two failure paths are complementary and can both fire in
+the same run:
+
+| Condition | Exit code |
+|---|---|
+| KEV match(es) found (and `--no-kev` not set) | `1` — always |
+| Vulnerabilities at or above `--fail-on` threshold | `1` |
+| No KEV matches and no `--fail-on` trigger | `0` |
+
+Use `--no-kev` to opt out of KEV hard-failure (e.g. in offline environments or
+when triaging KEV matches separately). The KEV catalog is cached for **24 hours**
+alongside other API responses.
 
 ---
 
@@ -449,13 +530,19 @@ pre-commit install
 
 ## CI Integration
 
-By default, the script exits with code `0` regardless of findings (advisory mode).
-Use `--fail-on=<level>` to make the script exit with code `1` when vulnerabilities
-at or above the specified severity threshold are found, enabling CI pipeline failures
-on security issues.
+By default, the script exits with code `0` regardless of findings (advisory mode),
+with two exceptions that always produce exit code `1`:
+
+- **KEV matches** — any CVE confirmed in the CISA Known Exploited Vulnerabilities
+  catalog causes an immediate hard failure (bypass with `--no-kev`).
+- **`--fail-on=<level>`** — exit code `1` when vulnerabilities at or above the
+  specified severity threshold are found.
+
+Both checks are independent and can both fire in the same run, each printing its
+own failure box before the process exits.
 
 ```yaml
-# GitHub Actions example — fail on any high or critical vulnerabilities
+# GitHub Actions example — fail on high/critical vulns AND any KEV match
 - name: Supply chain scan
   run: |
     NO_COLOR=1 node inspect-dependencies.js package.json \
@@ -464,6 +551,9 @@ on security issues.
       --output=supply-chain.json \
       --html=supply-chain.html \
       2>&1 | tee supply-chain-report.txt
+
+# To disable the KEV hard-fail (e.g. triaging KEV matches separately):
+#   add --no-kev to the command above
 
 - name: Upload scan results
   uses: actions/upload-artifact@v4

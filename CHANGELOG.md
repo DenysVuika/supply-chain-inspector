@@ -11,6 +11,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.0] — 2026-05-01
+
+### Added
+
+- **CISA KEV cross-reference** — after vulnerability scanning, all discovered CVEs are
+  automatically matched against the [CISA Known Exploited Vulnerabilities catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog)
+  - Fetches the full KEV catalog over HTTPS with a 24-hour file cache (no API key required)
+  - Matches on both primary OSV IDs (e.g. `GHSA-xxxx`) **and** all CVE aliases, so
+    `GHSA-2m8v-572m-ff2v → CVE-2021-21315` is correctly identified as a KEV hit
+  - KEV section only appears when at least one match is found, keeping clean scans noise-free
+
+- **CLI KEV alert section** — a bold red `▲▲▲` banner is printed below the findings
+  block whenever KEV matches are detected, listing for each match:
+  - Package name and version, severity badge, and CVE/advisory ID
+  - CISA vendor, product, date added to KEV, and remediation due date
+  - Required action text from the CISA catalog
+  - Ransomware campaign flag (`⚠ Known ransomware campaign use`) when applicable
+  - Direct link to the CISA KEV catalog
+
+- **HTML report KEV section** — a styled alert card block is injected above the
+  Findings section when KEV matches exist, with full metadata per match (vendor,
+  product, dates, required action, ransomware badge, CISA catalog link); a
+  `▲ N KEV matches` chip is also added to the totals banner
+
+- **`--no-kev` flag** — skips the CISA KEV fetch and cross-reference step
+  (KEV is also skipped automatically when `--no-vulns` is used); also the only
+  way to opt out of the KEV hard-fail in CI
+
+- **KEV hard-fail** — any KEV match causes the script to exit with code `1`
+  unconditionally, independent of `--fail-on`; a dedicated failure box is
+  printed listing each matching package, CVE ID, and the date it was added to
+  the catalog; both the `--fail-on` box and the KEV box are shown when both
+  conditions trigger in the same run
+
+- **KEV footer chip** — `▲ N KEV matches` appended to the terminal report footer
+  totals line alongside the existing severity counts
+
+- **CISA KEV** added to the data sources list in the HTML report footer
+
+### Changed
+
+- Cache TTL table extended with KEV entry: 24 h (CISA updates the catalog ~weekly)
+- Exit-code logic restructured: `--fail-on` severity check no longer calls
+  `process.exit(1)` immediately; both the severity check and the KEV check now
+  set a shared `shouldFail` flag, allowing both failure boxes to be displayed
+  before a single `process.exit(1)` at the end of the run
+- CI Integration documentation updated to reflect that KEV matches are a second,
+  always-on hard-fail path alongside `--fail-on`
+
+---
+
 ## [1.1.0] — 2026-04-20
 
 ### Added
@@ -118,6 +169,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shorter `nsci` after a global install
 - **`npx` support** — run directly from the npm registry with no prior install step
 
+[1.2.0]: https://github.com/denysvuika/supply-chain-inspector/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/denysvuika/supply-chain-inspector/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/denysvuika/supply-chain-inspector/compare/v0.1.1...v1.0.0
 [0.1.1]: https://github.com/denysvuika/supply-chain-inspector/compare/v0.1.0...v0.1.1
