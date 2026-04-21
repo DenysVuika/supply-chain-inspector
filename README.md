@@ -455,9 +455,9 @@ When matches are found:
 Example CLI output when matches exist:
 
 ```
-▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
-  ▲ KNOWN EXPLOITED VULNERABILITIES (CISA KEV)  ·  2 match(es) actively exploited in the wild
-▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+──────────────────────────────────────────────────────────────────────────────────────────
+  ▲ KNOWN EXPLOITED VULNERABILITIES (CISA KEV)  ·  2 matches with actively exploited CVEs
+──────────────────────────────────────────────────────────────────────────────────────────
 
   ● systeminformation@5.3.0  [MEDIUM  ]  GHSA-2m8v-572m-ff2v
     Command Injection Vulnerability
@@ -472,6 +472,8 @@ Example CLI output when matches exist:
     Added to KEV:      2021-12-10  ·  Due: 2022-06-10
     Required action:   Apply updates per vendor instructions.
     https://www.cisa.gov/known-exploited-vulnerabilities-catalog
+
+──────────────────────────────────────────────────────────────────────────────────────────
 ```
 
 ### Exit behaviour
