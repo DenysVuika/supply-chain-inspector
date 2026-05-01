@@ -171,6 +171,7 @@ an early refresh:
 |---|---|
 | `--findings` | Show per-package findings detail below the summary table. By default only the table is shown; a one-line hint indicates how many packages have signals. |
 | `--fail-on=<level>` | Exit with code 1 if vulnerabilities at or above the specified severity are found. Valid levels: `low`, `medium`, `high`, `critical` (default: `critical`). When set to `low`, any vulnerability will cause a failure. When set to `critical`, only critical vulnerabilities trigger a failure. |
+| `--fail-licenses=<licenses>` | Exit with code 1 if any dependency uses a restricted (copyleft) license. Accepts a comma-separated list: `GPL,AGPL,LGPL`. Normalizes automatically: `GPL-3.0-or-later` → `GPL-3.0` → `GPL`. Works independently of `--fail-on`. |
 | `--no-kev` | Skip the CISA KEV cross-reference entirely. **Without this flag, any KEV match always causes exit code 1**, regardless of `--fail-on` level — see [KEV Alert](#kev-alert). |
 
 ### Output
@@ -271,6 +272,9 @@ node inspect-dependencies.js package.json --fail-on=high
 
 # Fail the build on any vulnerability (low, medium, high, or critical)
 node inspect-dependencies.js package.json --fail-on=low
+
+# Fail the build if any dependency uses a copyleft license (GPL, AGPL, LGPL)
+node inspect-dependencies.js package.json --fail-licenses="GPL,AGPL,LGPL"
 
 # CI pipeline with strict security policy (fail on medium+)
 node inspect-dependencies.js package.json \
