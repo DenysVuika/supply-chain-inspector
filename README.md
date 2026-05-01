@@ -171,6 +171,7 @@ an early refresh:
 |---|---|
 | `--findings` | Show per-package findings detail below the summary table. By default only the table is shown; a one-line hint indicates how many packages have signals. |
 | `--fail-on=<level>` | Exit with code 1 if vulnerabilities at or above the specified severity are found. Valid levels: `low`, `medium`, `high`, `critical` (default: `critical`). When set to `low`, any vulnerability will cause a failure. When set to `critical`, only critical vulnerabilities trigger a failure. |
+| `--fail-licenses=<licenses>` | Exit with code 1 if any dependency uses a restricted (copyleft) license. Accepts a comma-separated list: `GPL,AGPL,LGPL`. Normalizes automatically: `GPL-3.0-or-later` → `GPL-3.0` → `GPL`. Works independently of `--fail-on`. |
 | `--no-kev` | Skip the CISA KEV cross-reference entirely. **Without this flag, any KEV match always causes exit code 1**, regardless of `--fail-on` level — see [KEV Alert](#kev-alert). |
 
 ### Output
@@ -271,6 +272,10 @@ node inspect-dependencies.js package.json --fail-on=high
 
 # Fail the build on any vulnerability (low, medium, high, or critical)
 node inspect-dependencies.js package.json --fail-on=low
+
+# Fail the build if any dependency uses a copyleft license (GPL, AGPL, LGPL)
+# (use the included test fixture to try this out)
+node inspect-dependencies.js assets/test-license-package.json --fail-licenses="GPL,AGPL,LGPL"
 
 # CI pipeline with strict security policy (fail on medium+)
 node inspect-dependencies.js package.json \
@@ -451,6 +456,12 @@ When matches are found:
 - **HTML report** — a dedicated red alert card section appears above Findings,
   with a grid of metadata per match (vendor, product, dates, required action,
   ransomware flag).
+
+A ready-made test fixture is included at [`assets/test-kev-package.json`](assets/test-kev-package.json) — it pins known-vulnerable versions of several packages so you can reproduce KEV matches locally:
+
+```bash
+node inspect-dependencies.js assets/test-kev-package.json
+```
 
 Example CLI output when matches exist:
 

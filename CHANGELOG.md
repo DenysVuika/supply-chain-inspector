@@ -11,7 +11,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.2.0] — 2026-05-01
+## [1.3.0] — 2026-05-01
+
+### Added
+
+- **`--fail-licenses` option** — exit with code 1 if any dependency uses a restricted
+  (copyleft) license. Accepts a comma-separated list of SPDX identifiers (e.g. `GPL,AGPL,LGPL`).
+  Normalizes license strings automatically: `GPL-3.0-or-later` → `GPL-3.0` → `GPL`.
+  Works independently of `--fail-on` — any matching license triggers failure.
+
+- **License failure box** — when restricted licenses are detected, a prominent red boxed
+  message lists affected packages with their license identifiers.
+
+- **HTML report license section** — license failures appear in the HTML report as a dedicated
+  alert section (similar to KEV), with a license chip on each affected package and
+  a banner showing the count.
+
+- **`normalizeLicense()` helper** — strips version suffixes, `-or-later` / `-only` variants,
+  and normalizes to uppercase base identifier for consistent matching.
+
+- **Documentation** — usage example added: `--fail-licenses="GPL,AGPL"` in CI for copyleft policy enforcement.
+
+---
+
+## [1.2.0] — 2026-04-21
 
 ### Added
 
@@ -143,6 +166,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shorter `nsci` after a global install
 - **`npx` support** — run directly from the npm registry with no prior install step
 
+[1.3.0]: https://github.com/denysvuika/supply-chain-inspector/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/denysvuika/supply-chain-inspector/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/denysvuika/supply-chain-inspector/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/denysvuika/supply-chain-inspector/compare/v0.1.1...v1.0.0

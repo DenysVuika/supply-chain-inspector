@@ -47,6 +47,10 @@
  *                            for URLs, auto-detects package-lock.json in same directory)
  *     --no-scorecard         Skip OpenSSF Scorecard lookups (faster, offline-friendly)
  *     --no-vulns             Skip OSV.dev vulnerability lookups
+ *     --fail-on=<severity>    Exit with code 1 if vulns at or above threshold
+ *                            (low | medium | high | critical; default: critical)
+ *     --fail-licenses=<lic>     Exit with code 1 if any dep uses a restricted license
+ *                            (comma-separated list: GPL,AGPL,LGPL,etc)
  *
  *   Cache
  *     --cache-dir=<path>     Where to store cached API responses
@@ -125,6 +129,9 @@
  *
  *   # High concurrency for large lockfiles (mind rate limits)
  *   node scripts/inspect-dependencies.js package.json --concurrency=10
+ *
+ *   # Fail on GPL/AGPL licenses (for copyleft policies in CI)
+ *   node scripts/inspect-dependencies.js package.json --fail-licenses="GPL,AGPL"
  *
  *   # CI-friendly: plain text report, exit code reflects nothing (advisory only)
  *   NO_COLOR=1 node scripts/inspect-dependencies.js package.json 2>&1
@@ -218,6 +225,7 @@ function parseArgs(argv) {
     includeTransitive: false,
     showFindings: false,
     failOn: "critical", // 'low' | 'medium' | 'high' | 'critical'
+    failLicenses: null,
   };
 
   for (const arg of args) {
@@ -273,6 +281,11 @@ function parseArgs(argv) {
       if (["low", "medium", "high", "critical"].includes(level)) {
         opts.failOn = level;
       }
+      continue;
+    }
+    if (arg.startsWith("--fail-licenses=")) {
+      const raw = arg.split("=").slice(1).join("=");
+      opts.failLicenses = raw.split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
       continue;
     }
     if (arg.startsWith("--lockfile=")) {
@@ -363,7 +376,7 @@ function truncate(str, max) {
 
 /** Render a 6-block scorecard bar with a numeric label.  e.g. "████░░ 6.8" */
 function scorecardBar(score) {
-  if (score === null || score === undefined) return `${C.dim}─ n/a  ${C.reset}`;
+  if (score === null || score === undefined || score < 0) return `${C.dim}─ n/a  ${C.reset}`;
   const filled = Math.round((score / 10) * 6);
   const bar = "█".repeat(filled) + "░".repeat(6 - filled);
   const color = score < 3 ? C.red : score < 5 ? C.yellow : C.green;
@@ -1001,6 +1014,70 @@ function extractAffectedRanges(vuln) {
   return ranges.slice(0, 5);
 }
 
+function normalizeLicense(license) {
+  if (!license || typeof license !== "string") return null;
+
+  const raw = license.trim().toUpperCase();
+
+  if (raw === "NOASSERTION" || raw === "NONE") return null;
+
+  if (raw === "MIT") return "MIT";
+  if (raw === "ISC") return "ISC";
+  if (raw === "BSD-2-CLAUSE" || raw === "BSD-2-CLAUSE-SHORT") return "BSD-2-CLAUSE";
+  if (raw === "BSD-3-CLAUSE" || raw === "BSD-3-CLAUSE-SHORT" || raw === "BSD") return "BSD-3-CLAUSE";
+  if (raw === "Apache-2.0" || raw === "Apache-2.0-only") return "Apache-2.0";
+  if (raw === "0BSD") return "0BSD";
+  if (raw === "CC0-1.0") return "CC0-1.0";
+  if (raw === "CC-BY-4.0") return "CC-BY-4.0";
+  if (raw === "UNLICENSED") return "UNLICENSED";
+
+  if (raw.startsWith("GPL-")) {
+    let base = raw.replace(/^GPL-/, "");
+    base = base.replace(/-OR-LATER$/, "").replace(/-ONLY$/, "");
+    if (/^\d+$/.test(base)) return `GPL-${base}`;
+    if (/^\d+\.\d+$/.test(base)) return `GPL-${base}`;
+    return "GPL";
+  }
+  if (raw.startsWith("LGPL-")) {
+    let base = raw.replace(/^LGPL-/, "");
+    base = base.replace(/-OR-LATER$/, "").replace(/-ONLY$/, "");
+    if (/^\d+$/.test(base)) return `LGPL-${base}`;
+    if (/^\d+\.\d+$/.test(base)) return `LGPL-${base}`;
+    return "LGPL";
+  }
+  if (raw === "AGPL-3.0" || raw === "AGPL-3.0-ONLY" || raw === "AGPL-3.0-OR-LATER") return "AGPL-3.0";
+  if (raw.startsWith("AGPL-")) {
+    let base = raw.replace(/^AGPL-/, "");
+    base = base.replace(/-OR-LATER$/, "").replace(/-ONLY$/, "");
+    if (/^\d+\.\d+$/.test(base)) return `AGPL-${base}`;
+    return "AGPL";
+  }
+
+  return raw;
+}
+
+function checkRestrictedLicenseFailures(results, opts) {
+  if (!opts.failLicenses || opts.failLicenses.length === 0) return [];
+
+  const failed = [];
+  for (const r of results) {
+    const lic = normalizeLicense(r.registry?.license);
+    if (!lic) continue;
+
+    for (const failLic of opts.failLicenses) {
+      if (lic === failLic || lic.startsWith(failLic + "-")) {
+        failed.push({
+          name: r.name,
+          version: r.resolvedVersion ?? r.versionSpec ?? "?",
+          license: r.registry?.license ?? "(unknown)",
+        });
+        break;
+      }
+    }
+  }
+  return failed;
+}
+
 // ─── OpenSSF Scorecard client ─────────────────────────────────────────────────
 
 /**
@@ -1287,11 +1364,15 @@ function buildNotFoundResult(name, versionSpec, scope, lockfileVersion) {
  *
  * @param {Array}  results  Output of inspectPackage for every dependency
  * @param {object} pkg      Parsed package.json of the scanned project
+ * @param {object} opts     CLI options (for license failure checks)
+ * @param {Array}  kevMatches Optional CISA KEV matches
  * @returns {string}        Complete HTML document as a string
  */
-function generateHtmlReport(results, pkg, kevMatches = []) {
+function generateHtmlReport(results, pkg, opts, kevMatches = []) {
   const pkgLabel =
     `${pkg.name ?? "(unnamed)"}` + (pkg.version ? `@${pkg.version}` : "");
+
+  const restrictedFailures = checkRestrictedLicenseFailures(results, opts);
 
   // Classify each result into its security signals — mirrors printReport logic
   const annotated = results.map((r) => {
@@ -1308,6 +1389,17 @@ function generateHtmlReport(results, pkg, kevMatches = []) {
     if ((r.registry?.publishedHoursAgo ?? Infinity) < 48)
       signals.push("very_recent");
     if (!r.sourceRepository && !r.notFound) signals.push("no_repo");
+    if (opts.failLicenses?.length > 0) {
+      const lic = normalizeLicense(r.registry?.license);
+      if (lic) {
+        for (const failLic of opts.failLicenses) {
+          if (lic === failLic || lic.startsWith(failLic + "-")) {
+            signals.push("restricted_license");
+            break;
+          }
+        }
+      }
+    }
     return { r, signals };
   });
 
@@ -1443,6 +1535,10 @@ function generateHtmlReport(results, pkg, kevMatches = []) {
         chips.push('<span class="chip not-found">not found on registry</span>');
       if (signals.includes("no_repo"))
         chips.push('<span class="chip no-repo">no source repo</span>');
+      if (signals.includes("restricted_license"))
+        chips.push(
+          `<span class="chip license">${he(r.registry?.license ?? "restricted")}</span>`,
+        );
 
       let body = "";
 
@@ -1620,6 +1716,10 @@ function generateHtmlReport(results, pkg, kevMatches = []) {
     totalChips.push(
       `<span class="total-chip clean">&#x2713; all ${results.length} package(s) clean</span>`,
     );
+  if (restrictedFailures.length > 0)
+    totalChips.push(
+      `<span class="total-chip license">&#x2696; ${restrictedFailures.length} restricted license${restrictedFailures.length !== 1 ? "s" : ""}</span>`,
+    );
   if (kevMatches.length > 0)
     totalChips.push(
       `<span class="total-chip kev">&#x25B2; ${kevMatches.length} KEV match${kevMatches.length !== 1 ? "es" : ""}</span>`,
@@ -1629,6 +1729,36 @@ function generateHtmlReport(results, pkg, kevMatches = []) {
     findings.length > 0
       ? `  <section>\n    <h2>Findings (${findings.length})</h2>\n${findingCards}\n  </section>`
       : `  <section>\n    <p class="all-clean">&#x2713; No security issues detected across all ${results.length} package(s).</p>\n  </section>`;
+
+  // ── License failure section ─────────────────────────────────────────────
+  const licenseSection =
+    restrictedFailures.length === 0
+      ? ""
+      : (() => {
+          const items = restrictedFailures
+            .map(({ name, version, license }) => {
+              return (
+                `    <li class="license-item">\n` +
+                `      <div class="license-header">\n` +
+                `        <span class="license-pkg-name">${he(name)}</span>\n` +
+                `        <span class="license-pkg-ver">${he(version)}</span>\n` +
+                `        <span class="license-badge">${he(license)}</span>\n` +
+                `      </div>\n` +
+                `    </li>`
+              );
+            })
+            .join("\n");
+          return (
+            `  <section class="license-section">\n` +
+            `    <div class="license-alert-banner">\n` +
+            `      <span class="license-icon">&#x2696;&#xFE0F;</span>\n` +
+            `      <span>RESTRICTED LICENSES &mdash; Copyleft licenses detected in dependencies</span>\n` +
+            `      <span class="license-count">${restrictedFailures.length} match${restrictedFailures.length !== 1 ? "es" : ""}</span>\n` +
+            `    </div>\n` +
+            `    <ul class="license-list">\n${items}\n    </ul>\n` +
+            `  </section>`
+          );
+        })();
 
   // ── KEV alert section ────────────────────────────────────────────────────
   const kevSection =
@@ -1934,6 +2064,7 @@ function generateHtmlReport(results, pkg, kevMatches = []) {
     .chip.recent    { color: #d4a017; background: #1e1a06; }
     .chip.not-found { color: #f85149; background: #200a0a; }
     .chip.no-repo   { color: var(--dim); background: var(--bg3); }
+    .chip.license { color: #f0883e; background: #261208; }
 
     .finding-body {
       padding: 4px 16px 16px;
@@ -2136,6 +2267,50 @@ function generateHtmlReport(results, pkg, kevMatches = []) {
       color: var(--blue);
     }
     .total-chip.kev { color: #ff4444; background: #200505; border-color: #ff4444; }
+    .total-chip.license { color: #f0883e; background: #261208; border-color: #f0883e; }
+
+    /* ── License alert section ── */
+    .license-section { margin-top: 28px; }
+    .license-alert-banner {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 18px;
+      background: #1a1408;
+      border: 1px solid #f0883e;
+      border-radius: var(--radius) var(--radius) 0 0;
+      color: #f0883e;
+      font-weight: 700;
+      font-size: 0.88rem;
+    }
+    .license-alert-banner .license-icon { font-size: 1.1rem; }
+    .license-alert-banner .license-count {
+      margin-left: auto;
+      font-size: 0.75rem;
+      background: #f0883e;
+      color: #000;
+      padding: 2px 10px;
+      border-radius: 12px;
+    }
+    .license-list { list-style: none; display: flex; flex-direction: column; gap: 0; }
+    .license-item {
+      background: #120d08;
+      border-left: 3px solid #f0883e;
+      border-right: 1px solid #f0883e;
+      padding: 10px 14px;
+      font-size: 0.82rem;
+    }
+    .license-item:last-child { border-radius: 0 0 var(--radius) var(--radius); border-bottom: 1px solid #f0883e; }
+    .license-item:first-child { border-top: none; }
+    .license-header { display: flex; align-items: center; gap: 10px; }
+    .license-pkg-name { color: var(--bright); font-weight: 600; }
+    .license-pkg-ver { color: var(--dim); font-family: monospace; font-size: 0.77rem; }
+    .license-badge {
+      margin-left: auto;
+      color: #f0883e;
+      font-weight: 600;
+      font-size: 0.75rem;
+    }
 
     /* ── Footer ── */
     .site-footer {
@@ -2191,6 +2366,8 @@ ${tableRows}
 
 ${kevSection}
 
+${licenseSection}
+
 ${findingsSection}
 
 </div>
@@ -2220,7 +2397,7 @@ ${findingsSection}
  *       └ Scorecard · Check: 0/10
  *   ━━━ footer totals ━━━
  */
-function printReport(results, pkg, showFindings = false, kevMatches = []) {
+function printReport(results, pkg, opts, showFindings = false, kevMatches = []) {
   const W = Math.min(process.stderr.columns ?? 80, 90);
   const hr = (ch = "─") => ch.repeat(W);
   const HR = (ch = "━") => ch.repeat(W);
@@ -2794,7 +2971,7 @@ async function main() {
 
   // ── Summary ─────────────────────────────────────────────────────────────────
   // ── Security report ───────────────────────────────────────────────────────
-  printReport(results, pkg, opts.showFindings, kevMatches);
+  printReport(results, pkg, opts, opts.showFindings, kevMatches);
 
   // ── HTML report (opt-in via --html=<path>) ────────────────────────────────
   if (opts.html) {
@@ -2802,7 +2979,7 @@ async function main() {
     try {
       writeFileSync(
         htmlPath,
-        generateHtmlReport(results, pkg, kevMatches),
+        generateHtmlReport(results, pkg, opts, kevMatches),
         "utf8",
       );
       log(`${C.dim}  HTML report written to: ${opts.html}${C.reset}`);
@@ -2848,21 +3025,47 @@ async function main() {
     log(
       `${C.dim}  Tip: run with --json to print full data, or --output=<file> to save it.${C.reset}`,
     );
-    log("");
+log("");
   }
 
-  // ── Exit code based on --fail-on threshold ────────────────────────────────
+  // ── Exit code based on --fail-on threshold and --fail-licenses ────────
   const severityLevels = ["low", "medium", "high", "critical"];
   const failThreshold = severityLevels.indexOf(opts.failOn);
 
   let shouldFail = false;
   const failedPackages = [];
 
+  // Check license failures
+  const restrictedFailures = checkRestrictedLicenseFailures(results, opts);
+  if (restrictedFailures.length > 0) {
+    shouldFail = true;
+    log("");
+    const boxWidth = 79;
+    const topLine = "╔" + "═".repeat(boxWidth - 2) + "╗";
+    const bottomLine = "╚" + "═".repeat(boxWidth - 2) + "╝";
+    const message = `LICENSE FAILURE: Restricted licenses found in dependencies`;
+    const padding = " ".repeat(boxWidth - 2 - message.length - 2);
+    const contentLine = `║  ${message}${padding}║`;
+
+    log(`${C.bred}${topLine}${C.reset}`);
+    log(`${C.bred}${contentLine}${C.reset}`);
+    log(`${C.bred}${bottomLine}${C.reset}`);
+    log("");
+    for (const pkg of restrictedFailures.slice(0, 5)) {
+      logErr(
+        `  ${C.red}▪${C.reset} ${C.bold}${pkg.name}${C.reset}${C.dim}@${pkg.version}${C.reset}: ${C.yellow}${pkg.license}${C.reset}`,
+      );
+    }
+    if (restrictedFailures.length > 5) {
+      log(`  ${C.dim}... and ${restrictedFailures.length - 5} more${C.reset}`);
+    }
+    log("");
+  }
+
+  // Check vulnerability failures
   for (const result of results) {
     if (result.vulnerabilities && result.vulnerabilities.summary) {
       const summary = result.vulnerabilities.summary;
-
-      // Check each severity level at or above the threshold
       for (let i = failThreshold; i < severityLevels.length; i++) {
         const level = severityLevels[i];
         if (summary[level] > 0) {
@@ -2878,7 +3081,7 @@ async function main() {
     }
   }
 
-  if (shouldFail) {
+  if (failedPackages.length > 0) {
     log("");
     const boxWidth = 79;
     const topLine = "╔" + "═".repeat(boxWidth - 2) + "╗";
