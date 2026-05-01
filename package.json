@@ -1,6 +1,6 @@
 {
   "name": "supply-chain-inspector",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Standalone, zero-dependency CLI for npm supply chain security analysis — vulnerability scanning, OpenSSF Scorecard, install-script detection, publisher history, and more.",
   "type": "module",
   "bin": {

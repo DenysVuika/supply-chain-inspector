@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [1.3.0] — 2026-05-01
+
 ### Added
 
 - **`--fail-licenses` option** — exit with code 1 if any dependency uses a restricted
@@ -30,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.2.0] — 2026-05-01
+## [1.2.0] — 2026-04-21
 
 ### Added
 
@@ -162,6 +166,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shorter `nsci` after a global install
 - **`npx` support** — run directly from the npm registry with no prior install step
 
+[1.3.0]: https://github.com/denysvuika/supply-chain-inspector/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/denysvuika/supply-chain-inspector/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/denysvuika/supply-chain-inspector/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/denysvuika/supply-chain-inspector/compare/v0.1.1...v1.0.0
