@@ -274,7 +274,8 @@ node inspect-dependencies.js package.json --fail-on=high
 node inspect-dependencies.js package.json --fail-on=low
 
 # Fail the build if any dependency uses a copyleft license (GPL, AGPL, LGPL)
-node inspect-dependencies.js package.json --fail-licenses="GPL,AGPL,LGPL"
+# (use the included test fixture to try this out)
+node inspect-dependencies.js assets/test-license-package.json --fail-licenses="GPL,AGPL,LGPL"
 
 # CI pipeline with strict security policy (fail on medium+)
 node inspect-dependencies.js package.json \
@@ -455,6 +456,12 @@ When matches are found:
 - **HTML report** — a dedicated red alert card section appears above Findings,
   with a grid of metadata per match (vendor, product, dates, required action,
   ransomware flag).
+
+A ready-made test fixture is included at [`assets/test-kev-package.json`](assets/test-kev-package.json) — it pins known-vulnerable versions of several packages so you can reproduce KEV matches locally:
+
+```bash
+node inspect-dependencies.js assets/test-kev-package.json
+```
 
 Example CLI output when matches exist:
 
