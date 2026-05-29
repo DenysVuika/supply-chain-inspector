@@ -32,9 +32,6 @@
     "sbom"
   ],
   "license": "Apache-2.0",
-  "publishConfig": {
-    "access": "public"
-  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/denysvuika/supply-chain-inspector.git"
@@ -49,10 +46,5 @@
   },
   "devDependencies": {
     "vitest": "^4.1.7"
-  },
-  "release": {
-    "branches": [
-      "main"
-    ]
   }
 }
