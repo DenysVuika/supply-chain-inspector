@@ -31,6 +31,10 @@
     "sbom"
   ],
   "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/denysvuika/supply-chain-inspector.git"
@@ -38,5 +42,17 @@
   "homepage": "https://github.com/denysvuika/supply-chain-inspector#readme",
   "bugs": {
     "url": "https://github.com/denysvuika/supply-chain-inspector/issues"
+  },
+  "devDependencies": {
+    "semantic-release": "^25.0.3",
+    "@semantic-release/commit-analyzer": "^13.0.1",
+    "@semantic-release/release-notes-generator": "^14.1.1",
+    "@semantic-release/npm": "^13.1.5",
+    "@semantic-release/github": "^12.0.8"
+  },
+  "release": {
+    "branches": [
+      "main"
+    ]
   }
 }
