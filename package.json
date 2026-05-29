@@ -10,6 +10,7 @@
   "files": [
     "cache.js",
     "inspect-dependencies.js",
+    "logger.js",
     "README.md",
     "LICENSE",
     "assets/"
