@@ -149,13 +149,25 @@
  *   OpenSSF Scorecard https://api.scorecard.dev       project health (17 checks)
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { resolve, dirname, basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
-
-// Resolved path of this script file — used to anchor the default cache directory
-// so the cache always lives next to inspect-dependencies.js regardless of cwd.
-const _scriptDir = dirname(fileURLToPath(import.meta.url));
+import {
+  getScriptDir,
+  TTL_NPM,
+  TTL_OSV,
+  TTL_SCORECARD,
+  TTL_KEV,
+  npmCache,
+  scorecardCache,
+  cacheStats,
+  initCache,
+  getCacheDir,
+  safeName,
+  readFromCache,
+  writeToCache,
+  fileCacheStats,
+} from "./cache.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -164,15 +176,6 @@ const OSV_API = "https://api.osv.dev/v1";
 const SCORECARD_API = "https://api.scorecard.dev";
 const KEV_URL =
   "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
-
-// ── File-cache TTLs ───────────────────────────────────────────────────────────
-// npm registry docs change when new versions are published → refresh every 6 h.
-// OSV advisories are updated continuously but rarely change within an hour → 6 h.
-// OpenSSF Scorecard is recomputed weekly by the OpenSSF infrastructure → 24 h.
-const TTL_NPM = 6 * 60 * 60 * 1000; //  6 hours
-const TTL_OSV = 6 * 60 * 60 * 1000; //  6 hours
-const TTL_SCORECARD = 24 * 60 * 60 * 1000; // 24 hours
-const TTL_KEV = 24 * 60 * 60 * 1000; // 24 hours — CISA updates ~weekly
 
 const LIFECYCLE_KEYS = [
   "preinstall",
@@ -185,22 +188,7 @@ const LIFECYCLE_KEYS = [
   "postpack",
 ];
 
-// ─── Per-run in-flight deduplication caches ───────────────────────────────────
-//
-// Each cache stores the Promise itself, not the resolved value.
-// This means concurrent workers that request the same key share one in-flight
-// HTTP request instead of each firing their own — critical for monorepos where
-// dozens of packages (e.g. all @babel/*, @jest/*, @angular/*) share one repo
-// and would otherwise trigger redundant Scorecard API calls in parallel.
-//
-// The npm cache handles the case where the same package appears in multiple
-// dependency groups (dependencies + devDependencies) when --include-dev is used.
 
-const _npmCache = new Map(); // package name  → Promise<pkgData | null>
-const _scorecardCache = new Map(); // "owner/repo"  → Promise<result>
-
-// Simple hit counters surfaced in the run summary
-const _cacheStats = { npmHits: 0, scorecardHits: 0 };
 
 // ─── CLI argument parsing ─────────────────────────────────────────────────────
 
@@ -409,71 +397,7 @@ function sevBadge(sev) {
   }
 }
 
-// ─── File-based cache ─────────────────────────────────────────────────────────
-//
-// Persists API responses between runs so repeated invocations on the same
-// project don't re-fetch unchanged data.  Each entry is a tiny JSON file:
-//
-//   { "cachedAt": "<ISO-8601>", "data": <original API response> }
-//
-// The cache directory is created on first use and can be safely deleted at any
-// time — the script will recreate it and fall back to live API calls.
-//
-// Layout (all files sit flat inside _cacheDir):
-//   npm_<name>.json              — full npm registry package document
-//   osv_<name>_<version>.json   — OSV.dev vulnerability result
-//   scorecard_<owner>__<repo>.json — OpenSSF Scorecard result
 
-let _cacheDir = null; // set in main() after CLI args are parsed
-const _fileCacheStats = { hits: 0, writes: 0 };
-
-/**
- * Sanitise an arbitrary string for use as a filename component.
- *   @babel/core  →  babel__core
- *   1.2.3-beta.1 →  1.2.3-beta.1   (dots/hyphens are fine)
- */
-function safeName(str) {
-  return String(str)
-    .replace(/^@/, "") // strip leading @ from scoped packages
-    .replace(/\//g, "__") // @scope/name → scope__name
-    .replace(/:/g, "_"); // guard against any colons
-}
-
-/**
- * Read a cached value.  Returns the stored data or null if the entry is
- * absent, unreadable, or older than `ttlMs` milliseconds.
- */
-function readFromCache(key, ttlMs) {
-  if (!_cacheDir) return null;
-  const file = join(_cacheDir, `${key}.json`);
-  if (!existsSync(file)) return null;
-  try {
-    const { cachedAt, data } = JSON.parse(readFileSync(file, "utf8"));
-    if (Date.now() - new Date(cachedAt).getTime() > ttlMs) return null;
-    _fileCacheStats.hits++;
-    return data;
-  } catch {
-    return null; // corrupt or unreadable — treat as cache miss
-  }
-}
-
-/**
- * Write a value to the cache.  Errors are logged as warnings but never thrown
- * so a non-writable cache directory never breaks the main analysis.
- */
-function writeToCache(key, data) {
-  if (!_cacheDir) return;
-  try {
-    writeFileSync(
-      join(_cacheDir, `${key}.json`),
-      JSON.stringify({ cachedAt: new Date().toISOString(), data }, null, 2),
-      "utf8",
-    );
-    _fileCacheStats.writes++;
-  } catch (err) {
-    logWarn(`Cache write failed for ${key}: ${err.message}`);
-  }
-}
 
 // ─── Lockfile parsing (package-lock.json v1/v2/v3) ───────────────────────────
 
@@ -644,12 +568,12 @@ function stripRangeOperators(spec) {
  * one in-flight request.
  */
 function fetchNpmPackage(name) {
-  if (_npmCache.has(name)) {
-    _cacheStats.npmHits++;
-    return _npmCache.get(name);
+  if (npmCache.has(name)) {
+    cacheStats.npmHits++;
+    return npmCache.get(name);
   }
   const promise = _doFetchNpmPackage(name);
-  _npmCache.set(name, promise);
+  npmCache.set(name, promise);
   return promise;
 }
 
@@ -676,7 +600,7 @@ async function _doFetchNpmPackage(name) {
       return null;
     }
     const data = await res.json();
-    writeToCache(cacheKey, data);
+    writeToCache(cacheKey, data, logWarn);
     return data;
   } catch (err) {
     logErr(`npm fetch failed for ${name}: ${err.message}`);
@@ -884,7 +808,7 @@ async function fetchVulnerabilities(name, version, ecosystem = "npm") {
     );
 
     const result = { summary, list, error: null };
-    writeToCache(cacheKey, result);
+    writeToCache(cacheKey, result, logWarn);
     return result;
   } catch (err) {
     logErr(`OSV query failed for ${name}@${version}: ${err.message}`);
@@ -919,7 +843,7 @@ async function fetchKEVList() {
     }
     const data = await res.json();
     const list = data.vulnerabilities ?? [];
-    writeToCache(cacheKey, list);
+    writeToCache(cacheKey, list, logWarn);
     return list;
   } catch (err) {
     logErr(`KEV catalog fetch error: ${err.message}`);
@@ -1121,13 +1045,13 @@ function fetchScorecard(repoUrl) {
   // Normalise to lowercase so "Babel/Babel" and "babel/babel" share one entry
   const cacheKey = `${parsed.owner}/${parsed.repo}`.toLowerCase();
 
-  if (_scorecardCache.has(cacheKey)) {
-    _cacheStats.scorecardHits++;
-    return _scorecardCache.get(cacheKey);
+  if (scorecardCache.has(cacheKey)) {
+    cacheStats.scorecardHits++;
+    return scorecardCache.get(cacheKey);
   }
 
   const promise = _doFetchScorecard(parsed);
-  _scorecardCache.set(cacheKey, promise);
+  scorecardCache.set(cacheKey, promise);
   return promise;
 }
 
@@ -1188,7 +1112,7 @@ async function _doFetchScorecard(parsed) {
       repoChecked: `github.com/${parsed.owner}/${parsed.repo}`,
       error: null,
     };
-    writeToCache(cacheKey, result);
+    writeToCache(cacheKey, result, logWarn);
     return result;
   } catch (err) {
     logWarn(
@@ -2797,18 +2721,18 @@ async function main() {
   }
 
   // ── File cache initialisation ─────────────────────────────────────────────
-  if (!opts.noCache) {
-    _cacheDir = opts.cacheDir
-      ? resolve(opts.cacheDir)
-      : join(_scriptDir, ".cache");
-    try {
-      mkdirSync(_cacheDir, { recursive: true });
-    } catch (err) {
-      logWarn(
-        `Could not create cache directory, caching disabled: ${err.message}`,
-      );
-      _cacheDir = null;
-    }
+  const scriptDir = getScriptDir();
+  const resolvedCacheDir = opts.cacheDir
+    ? resolve(opts.cacheDir)
+    : join(scriptDir, ".cache");
+  initCache(resolvedCacheDir, opts.noCache);
+  
+  // Log cache directory info
+  const cacheDir = getCacheDir();
+  if (cacheDir) {
+    log(`${C.dim}Cache:    ${cacheDir}${C.reset}`);
+  } else if (opts.noCache) {
+    log(`${C.dim}Cache:    disabled (--no-cache)${C.reset}`);
   }
 
   log(`\nSupply Chain Inspector`);
@@ -2854,11 +2778,6 @@ async function main() {
     );
   } else {
     logWarn(`No lockfile found — versions will be resolved from npm registry`);
-  }
-  if (_cacheDir) {
-    log(`${C.dim}Cache:    ${_cacheDir}${C.reset}`);
-  } else if (opts.noCache) {
-    log(`${C.dim}Cache:    disabled (--no-cache)${C.reset}`);
   }
 
   // ── Collect all dependency entries to inspect ───────────────────────────────
@@ -2989,24 +2908,24 @@ async function main() {
   }
 
   // ── Cache stats ───────────────────────────────────────────────────────────
-  const uniqueNpm = _npmCache.size;
-  const uniqueScorecard = _scorecardCache.size;
+  const uniqueNpm = npmCache.size;
+  const uniqueScorecard = scorecardCache.size;
   const anyStats =
-    _cacheStats.npmHits > 0 ||
-    _cacheStats.scorecardHits > 0 ||
-    _fileCacheStats.hits > 0 ||
-    _fileCacheStats.writes > 0;
+    cacheStats.npmHits > 0 ||
+    cacheStats.scorecardHits > 0 ||
+    fileCacheStats.hits > 0 ||
+    fileCacheStats.writes > 0;
   if (anyStats) {
     const parts = [];
-    if (_fileCacheStats.hits > 0)
+    if (fileCacheStats.hits > 0)
       parts.push(
-        `${_fileCacheStats.hits} file-cache hit${_fileCacheStats.hits !== 1 ? "s" : ""}`,
+        `${fileCacheStats.hits} file-cache hit${fileCacheStats.hits !== 1 ? "s" : ""}`,
       );
-    if (_fileCacheStats.writes > 0)
-      parts.push(`${_fileCacheStats.writes} written`);
-    if (_cacheStats.npmHits > 0 || _cacheStats.scorecardHits > 0)
+    if (fileCacheStats.writes > 0)
+      parts.push(`${fileCacheStats.writes} written`);
+    if (cacheStats.npmHits > 0 || cacheStats.scorecardHits > 0)
       parts.push(
-        `${_cacheStats.npmHits + _cacheStats.scorecardHits} in-flight deduped`,
+        `${cacheStats.npmHits + cacheStats.scorecardHits} in-flight deduped`,
       );
     log(`${C.dim}  cache: ${parts.join("  ·  ")}${C.reset}`);
     log("");
