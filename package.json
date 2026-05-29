@@ -38,11 +38,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/denysvuika/supply-chain-inspector.git"
+    "url": "https://github.com/DenysVuika/supply-chain-inspector"
   },
-  "homepage": "https://github.com/denysvuika/supply-chain-inspector#readme",
+  "homepage": "https://github.com/DenysVuika/supply-chain-inspector#readme",
   "bugs": {
-    "url": "https://github.com/denysvuika/supply-chain-inspector/issues"
+    "url": "https://github.com/DenysVuika/supply-chain-inspector/issues"
   },
   "scripts": {
     "test": "vitest run",
