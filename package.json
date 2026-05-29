@@ -8,6 +8,7 @@
     "nsci": "inspect-dependencies.js"
   },
   "files": [
+    "cache.js",
     "inspect-dependencies.js",
     "README.md",
     "LICENSE",
