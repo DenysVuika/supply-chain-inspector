@@ -152,6 +152,7 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { resolve, dirname, basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { log, logOk, logErr, logWarn } from "./logger.js";
 import {
   getScriptDir,
   TTL_NPM,
@@ -304,21 +305,6 @@ function parseArgs(argv) {
   }
 
   return opts;
-}
-
-// ─── Logging (always to stderr; stdout is reserved for --json output) ─────────
-
-function log(msg) {
-  process.stderr.write(msg + "\n");
-}
-function logOk(msg) {
-  process.stderr.write(`  ✓ ${msg}\n`);
-}
-function logErr(msg) {
-  process.stderr.write(`  ✗ ${msg}\n`);
-}
-function logWarn(msg) {
-  process.stderr.write(`  ⚠ ${msg}\n`);
 }
 
 // ─── ANSI color helpers ───────────────────────────────────────────────────────
