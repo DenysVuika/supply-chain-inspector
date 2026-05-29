@@ -6,7 +6,8 @@
     [
       "@semantic-release/npm",
       {
-        "npmPublish": true
+        "npmPublish": true,
+        "provenance": true
       }
     ],
     [
@@ -16,8 +17,5 @@
         "failComment": false
       }
     ]
-  ],
-  "preset": "conventionalcommits",
-  "dryRun": false,
-  "ci": true
+  ]
 }
