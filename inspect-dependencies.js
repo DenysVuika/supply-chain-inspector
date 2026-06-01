@@ -70,7 +70,8 @@
  *   Output
  *     --json                 Print the full JSON result array to stdout
  *     --output=<path>        Write JSON to a file (implies --json)
- *     --html=<path>          Write a standalone HTML security report to a file
+ *     --html[=<path>]        Write a standalone HTML security report to a file
+ *                            (defaults to report.html when no path given)
  *
  *   Color
  *     NO_COLOR=1             Disable ANSI colors (also auto-disabled when not a TTY)
@@ -294,6 +295,10 @@ function parseArgs(argv) {
       opts.output = arg.split("=").slice(1).join("=");
       // --output implies --json (no point writing a file with no content)
       opts.json = true;
+      continue;
+    }
+    if (arg === "--html") {
+      opts.html = "report.html";
       continue;
     }
     if (arg.startsWith("--html=")) {
@@ -2100,7 +2105,8 @@ async function main() {
         "  --lockfile=<path|url>  Path or URL to package-lock.json",
         "  --json                 Print the full JSON result to stdout",
         "  --output=<path>        Write JSON to a file (implies --json)",
-        "  --html=<path>          Write a standalone HTML report to a file",
+        "  --html[=<path>]        Write a standalone HTML report to a file",
+        "                         (defaults to report.html when no path given)",
         "  --no-scorecard         Skip OpenSSF Scorecard lookups",
         "  --no-vulns             Skip OSV.dev vulnerability lookups",
         "  --no-kev               Skip CISA KEV cross-reference (implies no KEV section)",
