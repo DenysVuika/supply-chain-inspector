@@ -70,7 +70,8 @@
  *   Output
  *     --json                 Print the full JSON result array to stdout
  *     --output=<path>        Write JSON to a file (implies --json)
- *     --html=<path>          Write a standalone HTML security report to a file
+ *     --html[=<path>]        Write a standalone HTML security report to a file
+ *                            (defaults to report.html when no path given)
  *
  *   Color
  *     NO_COLOR=1             Disable ANSI colors (also auto-disabled when not a TTY)
@@ -169,6 +170,7 @@ import {
   writeToCache,
   fileCacheStats,
 } from "./cache.js";
+import { loadCssTemplate, loadHtmlTemplate, renderTemplate } from "./templates.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -293,6 +295,10 @@ function parseArgs(argv) {
       opts.output = arg.split("=").slice(1).join("=");
       // --output implies --json (no point writing a file with no content)
       opts.json = true;
+      continue;
+    }
+    if (arg === "--html") {
+      opts.html = "report.html";
       continue;
     }
     if (arg.startsWith("--html=")) {
@@ -1279,6 +1285,10 @@ function buildNotFoundResult(name, versionSpec, scope, lockfileVersion) {
  * @returns {string}        Complete HTML document as a string
  */
 function generateHtmlReport(results, pkg, opts, kevMatches = []) {
+  // Load templates
+  const cssTemplate = loadCssTemplate();
+  const htmlTemplate = loadHtmlTemplate();
+
   const pkgLabel =
     `${pkg.name ?? "(unnamed)"}` + (pkg.version ? `@${pkg.version}` : "");
 
@@ -1720,575 +1730,21 @@ function generateHtmlReport(results, pkg, opts, kevMatches = []) {
           );
         })();
 
-  // ── Assemble the full HTML document ──────────────────────────────────────
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Supply Chain Report &#x2014; ${he(pkgLabel)}</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  // ── Assemble using template ──────────────────────────────────────────────
+  const replacements = {
+    TITLE: he(pkgLabel),
+    CSS: cssTemplate,
+    PKG_LABEL: he(pkgLabel),
+    PKG_COUNT: results.length,
+    GENERATED_AT: generatedAt,
+    TOTAL_CHIPS: totalChips.join("\n  "),
+    TABLE_ROWS: tableRows,
+    KEV_SECTION: kevSection,
+    LICENSE_SECTION: licenseSection,
+    FINDINGS_SECTION: findingsSection,
+  };
 
-    :root {
-      --bg:     #0d1117;
-      --bg2:    #161b22;
-      --bg3:    #21262d;
-      --border: #30363d;
-      --text:   #c9d1d9;
-      --dim:    #8b949e;
-      --bright: #f0f6fc;
-      --red:    #f85149;
-      --orange: #e3a84a;
-      --yellow: #d4a017;
-      --green:  #3fb950;
-      --blue:   #58a6ff;
-      --radius: 6px;
-    }
-
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-                   Helvetica, Arial, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.6;
-      padding-bottom: 64px;
-    }
-
-    a { color: var(--blue); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    code {
-      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-      font-size: 0.85em;
-      background: var(--bg3);
-      padding: 1px 4px;
-      border-radius: 3px;
-    }
-
-    /* ── Header ── */
-    .site-header {
-      background: var(--bg2);
-      border-bottom: 1px solid var(--border);
-      padding: 20px 32px;
-    }
-    .site-header h1 {
-      font-size: 1.4rem;
-      font-weight: 700;
-      color: var(--bright);
-      letter-spacing: -0.02em;
-    }
-    .site-header .meta {
-      margin-top: 6px;
-      font-size: 0.82rem;
-      color: var(--dim);
-      display: flex;
-      gap: 18px;
-      flex-wrap: wrap;
-    }
-    .site-header .meta strong { color: var(--text); }
-
-    /* ── Totals banner ── */
-    .totals-bar {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      padding: 12px 32px;
-      background: var(--bg2);
-      border-bottom: 1px solid var(--border);
-    }
-    .total-chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      padding: 3px 10px;
-      border-radius: 20px;
-      font-size: 0.77rem;
-      font-weight: 600;
-      border: 1px solid currentColor;
-    }
-    .total-chip.critical { color: #ff4444; background: #200a0a; }
-    .total-chip.high     { color: #f85149; background: #200a0a; }
-    .total-chip.medium   { color: #e3a84a; background: #1e1206; }
-    .total-chip.low      { color: #8b949e; background: #1c2128; }
-    .total-chip.clean    { color: #3fb950; background: #0a1f10; }
-    .total-chip.findings { color: #e3a84a; background: #1e1206; }
-
-    /* ── Layout ── */
-    .main { max-width: 1100px; margin: 0 auto; padding: 0 32px; }
-    section { margin-top: 28px; }
-    section > h2 {
-      font-size: 0.78rem;
-      font-weight: 700;
-      color: var(--dim);
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      margin-bottom: 10px;
-      padding-bottom: 6px;
-      border-bottom: 1px solid var(--border);
-    }
-    .all-clean { color: var(--green); padding: 14px 0; font-size: 0.9rem; }
-
-    /* ── Package table ── */
-    .pkg-table-wrap {
-      overflow-x: auto;
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-    }
-    .pkg-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-    .pkg-table th {
-      text-align: left;
-      padding: 8px 14px;
-      font-size: 0.71rem;
-      font-weight: 600;
-      color: var(--dim);
-      text-transform: uppercase;
-      letter-spacing: 0.07em;
-      background: var(--bg3);
-      border-bottom: 1px solid var(--border);
-      white-space: nowrap;
-    }
-    .pkg-table td {
-      padding: 7px 14px;
-      border-bottom: 1px solid var(--border);
-      vertical-align: middle;
-    }
-    .pkg-table tr:last-child td { border-bottom: none; }
-    .pkg-table tbody tr { background: var(--bg2); }
-    .pkg-table tbody tr:hover td { background: var(--bg3); transition: background 0.1s; }
-    .pkg-link { color: var(--bright); font-weight: 500; }
-    .pkg-link:hover { color: var(--blue); }
-    .td-repo { text-align: center; }
-    .repo-link { font-size: 1rem; opacity: 0.6; }
-    .repo-link:hover { opacity: 1; }
-    .dim { color: var(--dim); }
-    .scope {
-      display: inline-block;
-      padding: 1px 7px;
-      border-radius: 10px;
-      font-size: 0.7rem;
-      background: var(--bg3);
-      color: var(--dim);
-      border: 1px solid var(--border);
-    }
-
-    /* ── Vuln / script badges ── */
-    .badge {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 10px;
-      font-size: 0.71rem;
-      font-weight: 700;
-      border: 1px solid transparent;
-    }
-    .badge.critical { background: #200a0a; color: #ff4444; border-color: #ff4444; }
-    .badge.high     { background: #200a0a; color: #f85149; border-color: #f85149; }
-    .badge.medium   { background: #1e1206; color: #e3a84a; border-color: #e3a84a; }
-    .badge.low      { background: #1c2128; color: #8b949e; border-color: #8b949e; }
-    .badge.clean    { color: var(--dim); font-weight: 400; }
-    .badge.scripts  { background: #1e1206; color: #e3a84a; border-color: #e3a84a; }
-
-    /* ── Scorecard bar ── */
-    .sc-bar {
-      display: inline-block;
-      width: 56px;
-      height: 7px;
-      background: var(--bg3);
-      border-radius: 4px;
-      vertical-align: middle;
-      position: relative;
-      overflow: hidden;
-      border: 1px solid var(--border);
-    }
-    .sc-fill {
-      position: absolute;
-      top: 0; left: 0; bottom: 0;
-      border-radius: 4px;
-      transition: width 0.4s ease;
-    }
-    .sc-bar.sc-high .sc-fill { background: var(--green); }
-    .sc-bar.sc-med  .sc-fill { background: var(--orange); }
-    .sc-bar.sc-low  .sc-fill { background: var(--red); }
-    .sc-score { font-size: 0.8rem; vertical-align: middle; margin-left: 5px; }
-    .sc-score.sc-high { color: var(--green); }
-    .sc-score.sc-med  { color: var(--orange); }
-    .sc-score.sc-low  { color: var(--red); }
-    .sc-na { color: var(--dim); font-size: 0.8rem; }
-
-    /* ── Finding cards (collapsible <details>) ── */
-    .pkg-finding {
-      background: var(--bg2);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      margin-bottom: 6px;
-      overflow: hidden;
-    }
-    .pkg-finding > summary {
-      list-style: none;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 11px 16px;
-      cursor: pointer;
-      user-select: none;
-      flex-wrap: wrap;
-    }
-    .pkg-finding > summary::-webkit-details-marker { display: none; }
-    .pkg-finding > summary::before {
-      content: "\\25B6";
-      font-size: 0.6rem;
-      color: var(--dim);
-      flex-shrink: 0;
-      transition: transform 0.15s ease;
-    }
-    .pkg-finding[open] > summary::before { transform: rotate(90deg); }
-    .pkg-finding > summary:hover { background: var(--bg3); }
-    .pkg-finding > summary .pkg-name {
-      font-weight: 600;
-      color: var(--bright);
-      font-size: 0.92rem;
-    }
-    .pkg-finding > summary .pkg-ver {
-      font-size: 0.77rem;
-      color: var(--dim);
-      font-family: "SFMono-Regular", Consolas, monospace;
-      background: var(--bg3);
-      padding: 1px 6px;
-      border-radius: 4px;
-    }
-    .chips { display: inline-flex; gap: 5px; flex-wrap: wrap; margin-left: auto; }
-    .chip {
-      display: inline-flex;
-      align-items: center;
-      padding: 2px 8px;
-      border-radius: 12px;
-      font-size: 0.69rem;
-      font-weight: 600;
-      border: 1px solid currentColor;
-    }
-    .chip.critical  { color: #ff4444; background: #200a0a; }
-    .chip.high      { color: #f85149; background: #200a0a; }
-    .chip.medium    { color: #e3a84a; background: #1e1206; }
-    .chip.low       { color: #8b949e; background: #1c2128; }
-    .chip.scripts   { color: #e3a84a; background: #1e1206; }
-    .chip.scorecard { color: #e3a84a; background: #1e1206; }
-    .chip.recent    { color: #d4a017; background: #1e1a06; }
-    .chip.not-found { color: #f85149; background: #200a0a; }
-    .chip.no-repo   { color: var(--dim); background: var(--bg3); }
-    .chip.license { color: #f0883e; background: #261208; }
-
-    .finding-body {
-      padding: 4px 16px 16px;
-      border-top: 1px solid var(--border);
-    }
-    .detail-section { margin-top: 14px; }
-    .detail-section h4 {
-      font-size: 0.69rem;
-      font-weight: 700;
-      color: var(--dim);
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      margin-bottom: 8px;
-    }
-
-    /* Vulnerability list */
-    .vuln-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
-    .vuln-item {
-      background: var(--bg3);
-      border: 1px solid var(--border);
-      border-left: 3px solid var(--border);
-      border-radius: var(--radius);
-      padding: 9px 13px;
-      font-size: 0.82rem;
-    }
-    .vuln-item.critical { border-left-color: #ff4444; }
-    .vuln-item.high     { border-left-color: #f85149; }
-    .vuln-item.medium   { border-left-color: #e3a84a; }
-    .vuln-item.low      { border-left-color: #8b949e; }
-    .vuln-item.unknown  { border-left-color: var(--dim); }
-    .vuln-header {
-      display: flex;
-      align-items: center;
-      gap: 7px;
-      margin-bottom: 4px;
-      flex-wrap: wrap;
-    }
-    .vuln-header strong { color: var(--bright); }
-    .aliases { font-size: 0.72rem; color: var(--dim); }
-    .vuln-summary { color: var(--text); margin-bottom: 3px; }
-    .vuln-fix { font-size: 0.78rem; color: var(--green); }
-    .vuln-fix code { background: transparent; padding: 0; color: var(--green); }
-    .vuln-refs { font-size: 0.72rem; color: var(--dim); margin-top: 4px; word-break: break-all; }
-
-    .sev-badge {
-      display: inline-block;
-      padding: 1px 6px;
-      border-radius: 4px;
-      font-size: 0.67rem;
-      font-weight: 700;
-      text-transform: uppercase;
-    }
-    .sev-badge.critical { background: #ff4444; color: #fff; }
-    .sev-badge.high     { background: #f85149; color: #fff; }
-    .sev-badge.medium   { background: #e3a84a; color: #000; }
-    .sev-badge.low      { background: var(--bg3); color: var(--dim); border: 1px solid var(--border); }
-    .sev-badge.unknown  { background: var(--bg3); color: var(--dim); border: 1px solid var(--border); }
-
-    /* Install scripts */
-    .script-list { list-style: none; display: flex; flex-direction: column; gap: 5px; }
-    .script-list li {
-      display: flex;
-      gap: 12px;
-      align-items: flex-start;
-      background: var(--bg3);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 6px 10px;
-      font-size: 0.82rem;
-    }
-    .script-key {
-      color: #e3a84a;
-      min-width: 110px;
-      flex-shrink: 0;
-      background: transparent;
-      padding: 0;
-    }
-    .script-cmd { color: var(--dim); word-break: break-all; }
-
-    /* Scorecard checks */
-    .scorecard-list { list-style: none; }
-    .scorecard-list li {
-      display: flex;
-      align-items: baseline;
-      gap: 10px;
-      padding: 5px 0;
-      border-bottom: 1px solid var(--border);
-      font-size: 0.82rem;
-    }
-    .scorecard-list li:last-child { border-bottom: none; }
-    .sc-check-name { color: var(--bright); font-weight: 500; min-width: 180px; flex-shrink: 0; }
-    .sc-check-score { color: var(--red); font-weight: 600; min-width: 44px; }
-    .sc-check-reason { color: var(--dim); }
-
-    /* Version history grid */
-    .version-list {
-      list-style: none;
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
-      gap: 4px;
-    }
-    .version-list li {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 0.78rem;
-      padding: 4px 8px;
-      background: var(--bg3);
-      border-radius: 4px;
-    }
-    .version-list code { background: transparent; padding: 0; color: var(--blue); }
-    .vdate { color: var(--dim); }
-
-    /* Package metadata table */
-    .meta-table { border-collapse: collapse; font-size: 0.82rem; }
-    .meta-table th,
-    .meta-table td { padding: 4px 12px 4px 0; text-align: left; border-bottom: 1px solid var(--border); }
-    .meta-table tr:last-child th,
-    .meta-table tr:last-child td { border-bottom: none; }
-    .meta-table th { color: var(--dim); font-weight: 500; width: 130px; vertical-align: top; }
-    .meta-table td { color: var(--text); }
-
-    /* ── KEV alert section ── */
-    .kev-section {
-      margin-top: 28px;
-    }
-    .kev-alert-banner {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 12px 18px;
-      background: #1a0505;
-      border: 1px solid #ff4444;
-      border-radius: var(--radius) var(--radius) 0 0;
-      color: #ff4444;
-      font-weight: 700;
-      font-size: 0.88rem;
-    }
-    .kev-alert-banner .kev-icon { font-size: 1.1rem; }
-    .kev-alert-banner .kev-count {
-      margin-left: auto;
-      font-size: 0.75rem;
-      background: #ff4444;
-      color: #fff;
-      padding: 2px 10px;
-      border-radius: 12px;
-    }
-    .kev-list { list-style: none; display: flex; flex-direction: column; gap: 0; }
-    .kev-item {
-      background: #120303;
-      border: 1px solid #ff4444;
-      border-top: none;
-      padding: 12px 18px;
-      font-size: 0.83rem;
-    }
-    .kev-item:last-child { border-radius: 0 0 var(--radius) var(--radius); }
-    .kev-item-header {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 6px;
-      flex-wrap: wrap;
-    }
-    .kev-pkg-name { font-weight: 700; color: #ff4444; font-size: 0.92rem; }
-    .kev-pkg-ver {
-      font-size: 0.75rem;
-      color: var(--dim);
-      font-family: "SFMono-Regular", Consolas, monospace;
-      background: var(--bg3);
-      padding: 1px 6px;
-      border-radius: 4px;
-    }
-    .kev-cve { font-weight: 600; color: var(--bright); }
-    .kev-meta {
-      display: grid;
-      grid-template-columns: 140px 1fr;
-      gap: 3px 8px;
-      margin-top: 6px;
-      font-size: 0.79rem;
-    }
-    .kev-meta-label { color: var(--dim); font-weight: 500; }
-    .kev-meta-value { color: var(--text); }
-    .kev-ransomware {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      margin-top: 7px;
-      padding: 2px 10px;
-      background: #200505;
-      border: 1px solid #ff4444;
-      border-radius: 10px;
-      color: #ff4444;
-      font-size: 0.72rem;
-      font-weight: 700;
-    }
-    .kev-catalog-link {
-      display: inline-block;
-      margin-top: 7px;
-      font-size: 0.75rem;
-      color: var(--blue);
-    }
-    .total-chip.kev { color: #ff4444; background: #200505; border-color: #ff4444; }
-    .total-chip.license { color: #f0883e; background: #261208; border-color: #f0883e; }
-
-    /* ── License alert section ── */
-    .license-section { margin-top: 28px; }
-    .license-alert-banner {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 12px 18px;
-      background: #1a1408;
-      border: 1px solid #f0883e;
-      border-radius: var(--radius) var(--radius) 0 0;
-      color: #f0883e;
-      font-weight: 700;
-      font-size: 0.88rem;
-    }
-    .license-alert-banner .license-icon { font-size: 1.1rem; }
-    .license-alert-banner .license-count {
-      margin-left: auto;
-      font-size: 0.75rem;
-      background: #f0883e;
-      color: #000;
-      padding: 2px 10px;
-      border-radius: 12px;
-    }
-    .license-list { list-style: none; display: flex; flex-direction: column; gap: 0; }
-    .license-item {
-      background: #120d08;
-      border-left: 3px solid #f0883e;
-      border-right: 1px solid #f0883e;
-      padding: 10px 14px;
-      font-size: 0.82rem;
-    }
-    .license-item:last-child { border-radius: 0 0 var(--radius) var(--radius); border-bottom: 1px solid #f0883e; }
-    .license-item:first-child { border-top: none; }
-    .license-header { display: flex; align-items: center; gap: 10px; }
-    .license-pkg-name { color: var(--bright); font-weight: 600; }
-    .license-pkg-ver { color: var(--dim); font-family: monospace; font-size: 0.77rem; }
-    .license-badge {
-      margin-left: auto;
-      color: #f0883e;
-      font-weight: 600;
-      font-size: 0.75rem;
-    }
-
-    /* ── Footer ── */
-    .site-footer {
-      margin-top: 48px;
-      padding: 14px 32px;
-      border-top: 1px solid var(--border);
-      font-size: 0.72rem;
-      color: var(--dim);
-      display: flex;
-      gap: 16px;
-      flex-wrap: wrap;
-    }
-  </style>
-</head>
-<body>
-
-<header class="site-header">
-  <h1>&#x1F6E1;&#xFE0F; Supply Chain Report</h1>
-  <div class="meta">
-    <span><strong>${he(pkgLabel)}</strong></span>
-    <span>${results.length} package(s) inspected</span>
-    <span>Generated ${generatedAt}</span>
-  </div>
-</header>
-
-<div class="totals-bar">
-  ${totalChips.join("\n  ")}
-</div>
-
-<div class="main">
-
-  <section>
-    <h2>Packages</h2>
-    <div class="pkg-table-wrap">
-      <table class="pkg-table">
-        <thead>
-          <tr>
-            <th>Package</th>
-            <th>Version</th>
-            <th>Scope</th>
-            <th>Vulnerabilities</th>
-            <th>Scorecard</th>
-            <th>Scripts</th>
-            <th>Repo</th>
-          </tr>
-        </thead>
-        <tbody>
-${tableRows}
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-${kevSection}
-
-${licenseSection}
-
-${findingsSection}
-
-</div>
-
-<footer class="site-footer">
-  <span>Generated by <strong>inspect-dependencies.js</strong></span>
-  <span>Data sources: npm Registry &#x00B7; OSV.dev &#x00B7; OpenSSF Scorecard &#x00B7; CISA KEV</span>
-</footer>
-
-</body>
-</html>`;
+  return renderTemplate(htmlTemplate, replacements);
 }
 
 // ─── Terminal report ──────────────────────────────────────────────────────────
@@ -2649,7 +2105,8 @@ async function main() {
         "  --lockfile=<path|url>  Path or URL to package-lock.json",
         "  --json                 Print the full JSON result to stdout",
         "  --output=<path>        Write JSON to a file (implies --json)",
-        "  --html=<path>          Write a standalone HTML report to a file",
+        "  --html[=<path>]        Write a standalone HTML report to a file",
+        "                         (defaults to report.html when no path given)",
         "  --no-scorecard         Skip OpenSSF Scorecard lookups",
         "  --no-vulns             Skip OSV.dev vulnerability lookups",
         "  --no-kev               Skip CISA KEV cross-reference (implies no KEV section)",

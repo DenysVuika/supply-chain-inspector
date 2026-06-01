@@ -180,7 +180,7 @@ an early refresh:
 |---|---|
 | `--json` | Print the full result array as JSON to stdout |
 | `--output=<path>` | Write JSON to a file (implies `--json`) |
-| `--html=<path>` | Write a fully standalone HTML security report to a file (no server or internet connection required to view) |
+| `--html[=<path>]` | Write a fully standalone HTML security report to a file (no server or internet connection required to view). Defaults to `report.html` when no path is given. |
 
 ### Color
 
@@ -207,6 +207,9 @@ node inspect-dependencies.js package.json --output=results.json
 # Write a standalone HTML report — open report.html in any browser
 node inspect-dependencies.js package.json --html=report.html
 
+# Write a standalone HTML report with default name (report.html)
+node inspect-dependencies.js package.json --html
+
 # HTML report + JSON side by side (useful for both humans and tooling)
 node inspect-dependencies.js package.json --html=report.html --output=results.json
 
@@ -229,6 +232,9 @@ node inspect-dependencies.js package.json \
 
 # Generate an HTML report for easy sharing with your team
 node inspect-dependencies.js package.json --html=report.html
+
+# Generate an HTML report with default filename (report.html)
+node inspect-dependencies.js package.json --html
 
 # Inspect a remote package.json from GitHub (auto-detects remote lockfile)
 node inspect-dependencies.js https://raw.githubusercontent.com/angular/angular/refs/heads/main/package.json

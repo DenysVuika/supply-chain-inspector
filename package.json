@@ -8,12 +8,14 @@
     "nsci": "inspect-dependencies.js"
   },
   "files": [
-    "cache.js",
     "inspect-dependencies.js",
     "logger.js",
+    "cache.js",
+    "templates.js",
+    "assets/templates/html/report.css",
+    "assets/templates/html/report.html",
     "README.md",
-    "LICENSE",
-    "assets/"
+    "LICENSE"
   ],
   "engines": {
     "node": ">=18.0.0"
