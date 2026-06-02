@@ -193,6 +193,7 @@ an early refresh:
 | `--output=<path>` | Write JSON to a file (implies `--json`) |
 | `--html[=<path>]` | Write a fully standalone HTML security report to a file (no server or internet connection required to view). Defaults to `report.html` when no path is given. |
 | `--graph[=<path>]` | Write a standalone vis-network dependency graph report to a file. Graph root is `package.json` with scope nodes (`dependencies`, `devDependencies`, etc.) and package child nodes. Defaults to `graph-report.html` when no path is given. |
+| `--graph-no-dev` | In npm-package graph mode (e.g. `npx supply-chain-inspector vite --graph`), hide `devDependencies` in the graph. By default all scopes are included. |
 
 ### Color
 
@@ -228,6 +229,12 @@ npx supply-chain-inspector package.json --graph=graph-report.html
 # Graph report with default name (graph-report.html)
 npx supply-chain-inspector package.json --graph
 
+# In npm-package graph mode, all scopes are included by default
+npx supply-chain-inspector vite --graph
+
+# Hide devDependencies for a cleaner npm-package graph
+npx supply-chain-inspector vite --graph --graph-no-dev
+
 # HTML report + JSON side by side (useful for both humans and tooling)
 npx supply-chain-inspector package.json --html=report.html --output=results.json
 
@@ -236,6 +243,19 @@ npx supply-chain-inspector package.json --json 2>/dev/null
 
 # Pipe JSON straight into an AI tool
 npx supply-chain-inspector package.json --json | llm "analyze these deps"
+```
+
+### Graph Scope Controls
+
+In npm-package graph mode (for example: `npx supply-chain-inspector vite --graph`),
+all dependency scopes are included by default.
+
+```bash
+# Default: include dependencies + devDependencies + peerDependencies + optionalDependencies
+npx supply-chain-inspector vite --graph
+
+# Hide devDependencies for a cleaner graph view
+npx supply-chain-inspector vite --graph --graph-no-dev
 ```
 
 ---

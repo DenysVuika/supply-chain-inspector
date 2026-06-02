@@ -218,6 +218,7 @@ function parseArgs(argv) {
     output: null,
     html: null,
     graph: null,
+    graphNoDev: false,
     json: false,
     skipScorecard: false,
     skipVulns: false,
@@ -325,6 +326,10 @@ function parseArgs(argv) {
     }
     if (arg.startsWith('--graph=')) {
       opts.graph = arg.split('=').slice(1).join('=');
+      continue;
+    }
+    if (arg === '--graph-no-dev') {
+      opts.graphNoDev = true;
       continue;
     }
     if (!arg.startsWith('--')) {
@@ -801,6 +806,10 @@ function extractVersionMetadata(pkgData, version) {
     repository: normalizeRepoUrl(vd.repository ?? pkgData.repository),
     homepage: vd.homepage ?? pkgData.homepage ?? null,
     license: vd.license ?? pkgData.license ?? null,
+    dependencies: vd.dependencies ?? {},
+    devDependencies: vd.devDependencies ?? {},
+    peerDependencies: vd.peerDependencies ?? {},
+    optionalDependencies: vd.optionalDependencies ?? {},
     directDependencies: Object.keys(vd.dependencies ?? {}),
     dependencyCount: Object.keys(vd.dependencies ?? {}).length,
     devDependencyCount: Object.keys(vd.devDependencies ?? {}).length,
@@ -1904,6 +1913,7 @@ function generateGraphReport(
   kevMatches = [],
   lockfileData = null,
   lockfilePath = null,
+  graphContext = null,
 ) {
   const cssTemplate = loadGraphCssTemplate();
   const htmlTemplate = loadGraphHtmlTemplate();
@@ -1934,6 +1944,7 @@ function generateGraphReport(
   const edges = [];
   const nodeIds = new Map();
   const edgeKeys = new Set();
+  const scopePackageCounts = new Map(scopes.map((scope) => [scope.key, 0]));
   const resultNodeByName = new Map();
   const resultNodeByNameVersion = new Map();
 
@@ -1979,10 +1990,14 @@ function generateGraphReport(
     edges.push(edge);
   };
 
+  const rootLabel = graphContext?.rootLabel ?? 'package.json';
+  const rootTitle =
+    graphContext?.rootTitle ?? `${pkgLabel}\nRoot package manifest`;
+
   const rootId = addNode('root', {
-    label: 'package.json',
+    label: rootLabel,
     group: 'root',
-    title: `${pkgLabel}\nRoot package manifest`,
+    title: rootTitle,
   });
 
   const scopeNodeIds = new Map();
@@ -2049,7 +2064,37 @@ function generateGraphReport(
 
     resultNodeByName.set(r.name, nodeId);
     resultNodeByNameVersion.set(`${r.name}@${version}`, nodeId);
+    scopePackageCounts.set(scope, (scopePackageCounts.get(scope) ?? 0) + 1);
     addEdge(parentScopeId, nodeId);
+  }
+
+  // Additional dependency nodes for npm-package mode where we only inspect one
+  // package result, but still want its declared dependency graph visible.
+  const additionalDeps = graphContext?.scopeDependencies;
+  if (additionalDeps && typeof additionalDeps === 'object') {
+    for (const scope of scopes) {
+      const parentScopeId = scopeNodeIds.get(scope.key);
+      if (!parentScopeId) continue;
+      const deps = additionalDeps[scope.key] ?? [];
+      for (const dep of deps) {
+        const depName = dep?.name;
+        if (!depName) continue;
+        if (resultNodeByName.has(depName)) continue;
+
+        const depVersionSpec = dep.versionSpec ?? '*';
+        const depKey = `ext:${scope.key}:${depName}@${depVersionSpec}`;
+        const depId = addNode(depKey, {
+          label: `${depName}\n${depVersionSpec}`,
+          group: scope.key,
+          title: `${depName}@${depVersionSpec}\nScope: ${scope.key}\nSource: npm package metadata`,
+        });
+        addEdge(parentScopeId, depId);
+        scopePackageCounts.set(
+          scope.key,
+          (scopePackageCounts.get(scope.key) ?? 0) + 1,
+        );
+      }
+    }
   }
 
   // Add lockfile package-to-package edges for deeper transitive visibility.
@@ -2080,9 +2125,7 @@ function generateGraphReport(
 
   const scopeCounts = scopes
     .map((s) => {
-      const count = results.filter(
-        (r) => normalizeScope(r.scope) === s.key,
-      ).length;
+      const count = scopePackageCounts.get(s.key) ?? 0;
       return `<span class="summary-chip">${he(s.label)}: ${count}</span>`;
     })
     .join('\n');
@@ -2481,6 +2524,8 @@ async function main() {
         '                         (defaults to report.html when no path given)',
         '  --graph[=<path>]       Write a vis-network dependency graph report',
         '                         (defaults to graph-report.html when no path given)',
+        '  --graph-no-dev         In npm-package graph mode, hide devDependencies',
+        '                         (default graph view includes all dependency scopes)',
         '  --no-scorecard         Skip OpenSSF Scorecard lookups',
         '  --no-vulns             Skip OSV.dev vulnerability lookups',
         '  --no-kev               Skip CISA KEV cross-reference (implies no KEV section)',
@@ -2587,9 +2632,46 @@ async function main() {
     if (opts.graph) {
       const graphPath = resolve(opts.graph);
       try {
+        const mainResult = results[0] ?? null;
+        const reg = mainResult?.registry ?? {};
+        const rootPkgLabel = `${parsed.name}@${mainResult?.resolvedVersion ?? parsed.versionSpec}`;
+        const toDepEntries = (obj) =>
+          Object.entries(obj ?? {}).map(([name, versionSpec]) => ({
+            name,
+            versionSpec,
+          }));
+
+        const graphContext = {
+          rootLabel: parsed.name,
+          rootTitle: `${rootPkgLabel}\nRoot npm package`,
+          scopeDependencies: {
+            dependencies: toDepEntries(reg.dependencies),
+            devDependencies: opts.graphNoDev
+              ? []
+              : toDepEntries(reg.devDependencies),
+            peerDependencies: toDepEntries(reg.peerDependencies),
+            optionalDependencies: toDepEntries(reg.optionalDependencies),
+          },
+        };
+
+        if (opts.graphNoDev) {
+          log(
+            `${C.dim}  graph: hiding devDependencies for npm-package mode ` +
+              `(remove --graph-no-dev to include them)${C.reset}`,
+          );
+        }
+
         writeFileSync(
           graphPath,
-          generateGraphReport(results, pkg, opts, kevMatches),
+          generateGraphReport(
+            results,
+            pkg,
+            opts,
+            kevMatches,
+            null,
+            null,
+            graphContext,
+          ),
           'utf8',
         );
         log(`${C.dim}  Graph report written to: ${opts.graph}${C.reset}`);
