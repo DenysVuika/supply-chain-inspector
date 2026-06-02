@@ -1,0 +1,131 @@
+:root {
+  --bg: #0f1319;
+  --panel: #151b24;
+  --panel-2: #1b2430;
+  --border: #2c3645;
+  --text: #e5edf7;
+  --muted: #9aa7ba;
+  --accent: #5ac8fa;
+  --ok: #75c17e;
+  --warn: #f6b26b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(
+      circle at 15% -20%,
+      rgba(90, 200, 250, 0.22),
+      transparent 45%
+    ),
+    radial-gradient(
+      circle at 90% 0%,
+      rgba(117, 193, 126, 0.18),
+      transparent 40%
+    ),
+    var(--bg);
+  color: var(--text);
+  font-family: 'Trebuchet MS', 'Segoe UI', Tahoma, sans-serif;
+  min-height: 100vh;
+}
+
+.site-header {
+  padding: 18px 22px 12px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(
+    180deg,
+    rgba(23, 30, 40, 0.9),
+    rgba(20, 26, 35, 0.85)
+  );
+  backdrop-filter: blur(3px);
+}
+
+.site-header h1 {
+  margin: 0;
+  font-size: 1.25rem;
+  letter-spacing: 0.02em;
+}
+
+.meta {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.summary-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(17, 23, 32, 0.9);
+}
+
+.summary-chip {
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+}
+
+.summary-chip.ok {
+  border-color: var(--ok);
+  color: #d7f5da;
+}
+
+.summary-chip.warn {
+  border-color: var(--warn);
+  color: #ffe4c3;
+}
+
+.main {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 14px 16px 20px;
+}
+
+#dependency-graph {
+  width: 100%;
+  height: min(76vh, 840px);
+  min-height: 520px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(29, 38, 51, 0.44), rgba(20, 26, 35, 0.35)),
+    var(--panel);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+}
+
+.hint {
+  color: var(--muted);
+  margin: 10px 4px 0;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 768px) {
+  .site-header {
+    padding: 14px 14px 10px;
+  }
+
+  .summary-bar {
+    padding: 8px 12px;
+  }
+
+  .main {
+    padding: 10px;
+  }
+
+  #dependency-graph {
+    min-height: 420px;
+    height: 66vh;
+  }
+}

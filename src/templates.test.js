@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   loadCssTemplate,
   loadHtmlTemplate,
+  loadGraphCssTemplate,
+  loadGraphHtmlTemplate,
   clearTemplateCache,
   renderTemplate,
   getTemplatesDir,
@@ -120,6 +122,57 @@ describe("loadHtmlTemplate()", () => {
   it("returns the same value on subsequent calls (caching)", () => {
     const first = loadHtmlTemplate();
     const second = loadHtmlTemplate();
+    expect(second).toBe(first);
+  });
+});
+
+describe("loadGraphCssTemplate()", () => {
+  beforeEach(() => {
+    clearTemplateCache();
+  });
+
+  it("returns a non-empty string", () => {
+    const css = loadGraphCssTemplate();
+    expect(typeof css).toBe("string");
+    expect(css.length).toBeGreaterThan(0);
+  });
+
+  it("contains expected graph CSS selectors", () => {
+    const css = loadGraphCssTemplate();
+    expect(css).toContain("#dependency-graph");
+    expect(css).toContain(".summary-chip");
+  });
+
+  it("returns the same value on subsequent calls (caching)", () => {
+    const first = loadGraphCssTemplate();
+    const second = loadGraphCssTemplate();
+    expect(second).toBe(first);
+  });
+});
+
+describe("loadGraphHtmlTemplate()", () => {
+  beforeEach(() => {
+    clearTemplateCache();
+  });
+
+  it("returns a non-empty string", () => {
+    const html = loadGraphHtmlTemplate();
+    expect(typeof html).toBe("string");
+    expect(html.length).toBeGreaterThan(0);
+  });
+
+  it("contains expected graph placeholders", () => {
+    const html = loadGraphHtmlTemplate();
+    expect(html).toContain("{{TITLE}}");
+    expect(html).toContain("{{CSS}}");
+    expect(html).toContain("{{PKG_LABEL}}");
+    expect(html).toContain("{{SUMMARY_CHIPS}}");
+    expect(html).toContain("{{GRAPH_PAYLOAD}}");
+  });
+
+  it("returns the same value on subsequent calls (caching)", () => {
+    const first = loadGraphHtmlTemplate();
+    const second = loadGraphHtmlTemplate();
     expect(second).toBe(first);
   });
 });

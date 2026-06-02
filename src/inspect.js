@@ -179,6 +179,8 @@ import {
 import {
   loadCssTemplate,
   loadHtmlTemplate,
+  loadGraphCssTemplate,
+  loadGraphHtmlTemplate,
   renderTemplate,
 } from './templates.js';
 
@@ -215,6 +217,7 @@ function parseArgs(argv) {
     lockfilePath: null,
     output: null,
     html: null,
+    graph: null,
     json: false,
     skipScorecard: false,
     skipVulns: false,
@@ -314,6 +317,14 @@ function parseArgs(argv) {
     }
     if (arg.startsWith('--html=')) {
       opts.html = arg.split('=').slice(1).join('=');
+      continue;
+    }
+    if (arg === '--graph') {
+      opts.graph = 'graph-report.html';
+      continue;
+    }
+    if (arg.startsWith('--graph=')) {
+      opts.graph = arg.split('=').slice(1).join('=');
       continue;
     }
     if (!arg.startsWith('--')) {
@@ -525,6 +536,121 @@ function loadAllLockfilePackages(lockfilePath) {
     logWarn(`Could not parse lockfile: ${err.message}`);
     return [];
   }
+}
+
+/**
+ * Load and parse lockfile JSON from file path.
+ * Returns null when missing or invalid.
+ */
+function loadLockfileData(lockfilePath) {
+  if (!lockfilePath || !existsSync(lockfilePath)) return null;
+
+  try {
+    const raw = readFileSync(lockfilePath, 'utf8');
+    return JSON.parse(raw);
+  } catch (err) {
+    logWarn(`Could not parse lockfile data: ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * Extract package-to-package dependency edges from package-lock.json data.
+ * Supports lockfile v1 nested dependencies and v2/v3 packages map.
+ * Returns objects: { fromName, fromVersion, toName, toVersion }.
+ */
+function extractLockfileDependencyEdges(lock) {
+  if (!lock || typeof lock !== 'object') return [];
+
+  const edgeKeys = new Set();
+  const edges = [];
+
+  const addEdge = (fromName, fromVersion, toName, toVersion) => {
+    if (!fromName || !toName) return;
+    const key = `${fromName}@${fromVersion ?? '?'}->${toName}@${toVersion ?? '?'}`;
+    if (edgeKeys.has(key)) return;
+    edgeKeys.add(key);
+    edges.push({ fromName, fromVersion, toName, toVersion });
+  };
+
+  // lockfile v2/v3: flat packages map keyed by node_modules path
+  if (lock.packages && typeof lock.packages === 'object') {
+    const pathMeta = new Map();
+
+    for (const [pkgPath, pkgMeta] of Object.entries(lock.packages)) {
+      if (!pkgPath.startsWith('node_modules/')) continue;
+      if (!pkgMeta?.version) continue;
+
+      const fullPath = pkgPath.replace(/^node_modules\//, '');
+      const leafPath = fullPath.split('/node_modules/').pop() ?? fullPath;
+      const leafParts = leafPath.split('/');
+      const name = leafParts[0].startsWith('@')
+        ? `${leafParts[0]}/${leafParts[1]}`
+        : leafParts[0];
+
+      pathMeta.set(pkgPath, {
+        name,
+        version: pkgMeta.version,
+        deps: {
+          ...(pkgMeta.dependencies ?? {}),
+          ...(pkgMeta.optionalDependencies ?? {}),
+          ...(pkgMeta.peerDependencies ?? {}),
+        },
+      });
+    }
+
+    const resolveDepPath = (parentPath, depName) => {
+      let current = parentPath;
+
+      while (true) {
+        const candidate = current
+          ? `${current}/node_modules/${depName}`
+          : `node_modules/${depName}`;
+        if (pathMeta.has(candidate)) return candidate;
+
+        if (!current) break;
+        const upIdx = current.lastIndexOf('/node_modules/');
+        if (upIdx === -1) {
+          current = '';
+        } else {
+          current = current.slice(0, upIdx);
+        }
+      }
+
+      return null;
+    };
+
+    for (const [pkgPath, meta] of pathMeta.entries()) {
+      for (const depName of Object.keys(meta.deps ?? {})) {
+        const depPath = resolveDepPath(pkgPath, depName);
+        if (!depPath) continue;
+        const depMeta = pathMeta.get(depPath);
+        if (!depMeta) continue;
+        addEdge(meta.name, meta.version, depMeta.name, depMeta.version);
+      }
+    }
+
+    return edges;
+  }
+
+  // lockfile v1: nested dependencies tree
+  const walk = (parent, depsObj) => {
+    if (!depsObj || typeof depsObj !== 'object') return;
+    for (const [name, meta] of Object.entries(depsObj)) {
+      if (!meta || !meta.version) continue;
+      addEdge(parent.name, parent.version, name, meta.version);
+      walk({ name, version: meta.version }, meta.dependencies);
+    }
+  };
+
+  if (lock.dependencies && typeof lock.dependencies === 'object') {
+    for (const [name, meta] of Object.entries(lock.dependencies)) {
+      if (!meta || !meta.version) continue;
+      walk({ name, version: meta.version }, meta.dependencies);
+    }
+  }
+
+  return edges;
 }
 
 // ─── Version spec helpers ─────────────────────────────────────────────────────
@@ -1764,6 +1890,224 @@ function generateHtmlReport(results, pkg, opts, kevMatches = []) {
   return renderTemplate(htmlTemplate, replacements);
 }
 
+/**
+ * Generate a dependency graph report using vis-network.
+ * Graph model:
+ *   package.json -> scope buckets (dependencies/devDependencies/...) -> package nodes
+ * When --include-transitive is enabled, transitive nodes are added under
+ * the transitiveDependencies bucket.
+ */
+function generateGraphReport(
+  results,
+  pkg,
+  opts,
+  kevMatches = [],
+  lockfileData = null,
+  lockfilePath = null,
+) {
+  const cssTemplate = loadGraphCssTemplate();
+  const htmlTemplate = loadGraphHtmlTemplate();
+
+  const pkgLabel =
+    `${pkg.name ?? '(unnamed)'}` + (pkg.version ? `@${pkg.version}` : '');
+
+  function he(s) {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  const scopes = [
+    { key: 'dependencies', label: 'dependencies' },
+    { key: 'devDependencies', label: 'devDependencies' },
+    { key: 'peerDependencies', label: 'peerDependencies' },
+    { key: 'optionalDependencies', label: 'optionalDependencies' },
+  ];
+  if (opts.includeTransitive) {
+    scopes.push({ key: 'transitive', label: 'transitiveDependencies' });
+  }
+
+  let nextId = 1;
+  const nodes = [];
+  const edges = [];
+  const nodeIds = new Map();
+  const edgeKeys = new Set();
+  const resultNodeByName = new Map();
+  const resultNodeByNameVersion = new Map();
+
+  const kevSet = new Set(
+    kevMatches.map((m) => `${m.packageName}@${m.version ?? '?'}`),
+  );
+
+  const isProblematic = (r) => {
+    const version = r.resolvedVersion ?? r.versionSpec ?? '?';
+    if (r.notFound) return true;
+    if ((r.vulnerabilities?.summary?.total ?? 0) > 0) return true;
+    if (r.registry?.hasInstallScripts) return true;
+    if (
+      r.scorecard?.score !== null &&
+      r.scorecard?.score !== undefined &&
+      r.scorecard.score < 5
+    ) {
+      return true;
+    }
+    if (kevSet.has(`${r.name}@${version}`)) return true;
+    return false;
+  };
+
+  const addNode = (key, node) => {
+    if (nodeIds.has(key)) return nodeIds.get(key);
+    const id = nextId++;
+    nodes.push({ id, ...node });
+    nodeIds.set(key, id);
+    return id;
+  };
+
+  const addEdge = (from, to, extra = {}) => {
+    const label = extra.label ?? '';
+    const key = `${from}->${to}|${label}|${extra.className ?? ''}`;
+    if (edgeKeys.has(key)) return;
+    edgeKeys.add(key);
+    const edge = { from, to };
+    if (label) edge.label = label;
+    if (extra.dashes !== undefined) edge.dashes = extra.dashes;
+    if (extra.color) edge.color = extra.color;
+    if (extra.width !== undefined) edge.width = extra.width;
+    if (extra.smooth) edge.smooth = extra.smooth;
+    edges.push(edge);
+  };
+
+  const rootId = addNode('root', {
+    label: 'package.json',
+    group: 'root',
+    title: `${pkgLabel}\nRoot package manifest`,
+  });
+
+  const scopeNodeIds = new Map();
+  for (const scope of scopes) {
+    const id = addNode(`scope:${scope.key}`, {
+      label: scope.label,
+      group: 'section',
+      title: `Dependency scope: ${scope.label}`,
+    });
+    scopeNodeIds.set(scope.key, id);
+    addEdge(rootId, id);
+  }
+
+  const normalizeScope = (scope) => {
+    if (!scope || scope === 'direct') return 'dependencies';
+    if (scopeNodeIds.has(scope)) return scope;
+    return 'dependencies';
+  };
+
+  const vulnerabilitiesCount = (r) => r.vulnerabilities?.summary?.total ?? 0;
+  const findingsCount = results.filter((r) => isProblematic(r)).length;
+
+  for (const r of results) {
+    const scope = normalizeScope(r.scope);
+    const parentScopeId =
+      scopeNodeIds.get(scope) ?? scopeNodeIds.get('dependencies');
+    const version = r.resolvedVersion ?? r.versionSpec ?? '?';
+    const pkgKey = `pkg:${r.name}@${version}`;
+    const vulnTotal = vulnerabilitiesCount(r);
+    const score = r.scorecard?.score;
+    const label = `${r.name}\n${version}`;
+
+    const titleParts = [
+      `${r.name}@${version}`,
+      `Scope: ${r.scope ?? 'dependencies'}`,
+      `Vulnerabilities: ${vulnTotal}`,
+      `Scorecard: ${
+        score === null || score === undefined ? 'n/a' : score.toFixed(1)
+      }`,
+      `Install scripts: ${r.registry?.hasInstallScripts ? 'yes' : 'no'}`,
+    ];
+    if (r.notFound)
+      titleParts.push('Package metadata not found in npm registry');
+
+    const problematic = isProblematic(r);
+    const nodeId = addNode(pkgKey, {
+      label,
+      group: scope,
+      problematic,
+      ...(problematic
+        ? {
+            color: {
+              background: '#4a1616',
+              border: '#ff6b6b',
+              highlight: { background: '#662020', border: '#ff9a9a' },
+              hover: { background: '#5a1b1b', border: '#ff7f7f' },
+            },
+            borderWidth: 2.4,
+            font: { color: '#fff2f2' },
+          }
+        : {}),
+      title: titleParts.join('\n'),
+    });
+
+    resultNodeByName.set(r.name, nodeId);
+    resultNodeByNameVersion.set(`${r.name}@${version}`, nodeId);
+    addEdge(parentScopeId, nodeId);
+  }
+
+  // Add lockfile package-to-package edges for deeper transitive visibility.
+  // Enabled only when --include-transitive is requested.
+  if (opts.includeTransitive) {
+    const lock = lockfileData ?? loadLockfileData(lockfilePath);
+    if (lock) {
+      const depEdges = extractLockfileDependencyEdges(lock);
+      for (const dep of depEdges) {
+        const fromId =
+          resultNodeByNameVersion.get(
+            `${dep.fromName}@${dep.fromVersion ?? '?'}`,
+          ) ?? resultNodeByName.get(dep.fromName);
+        const toId =
+          resultNodeByNameVersion.get(
+            `${dep.toName}@${dep.toVersion ?? '?'}`,
+          ) ?? resultNodeByName.get(dep.toName);
+        if (!fromId || !toId || fromId === toId) continue;
+        addEdge(fromId, toId, {
+          dashes: true,
+          color: { color: '#7e8794', highlight: '#b9c2cf' },
+          width: 1,
+          smooth: { type: 'cubicBezier', roundness: 0.2 },
+        });
+      }
+    }
+  }
+
+  const scopeCounts = scopes
+    .map((s) => {
+      const count = results.filter(
+        (r) => normalizeScope(r.scope) === s.key,
+      ).length;
+      return `<span class="summary-chip">${he(s.label)}: ${count}</span>`;
+    })
+    .join('\n');
+
+  const summaryChips =
+    scopeCounts +
+    '\n' +
+    `<span class="summary-chip ${findingsCount > 0 ? 'warn' : 'ok'}">findings: ${findingsCount}</span>` +
+    '\n' +
+    `<span class="summary-chip">nodes: ${nodes.length}</span>` +
+    '\n' +
+    `<span class="summary-chip">edges: ${edges.length}</span>`;
+
+  const payload = JSON.stringify({ nodes, edges }).replace(/<\//g, '<\\/');
+
+  return renderTemplate(htmlTemplate, {
+    TITLE: he(pkgLabel),
+    CSS: cssTemplate,
+    PKG_LABEL: he(pkgLabel),
+    GENERATED_AT: new Date().toUTCString(),
+    SUMMARY_CHIPS: summaryChips,
+    GRAPH_PAYLOAD: payload,
+  });
+}
+
 // ─── Terminal report ──────────────────────────────────────────────────────────
 
 /**
@@ -2135,6 +2479,8 @@ async function main() {
         '  --output=<path>        Write JSON to a file (implies --json)',
         '  --html[=<path>]        Write a standalone HTML report to a file',
         '                         (defaults to report.html when no path given)',
+        '  --graph[=<path>]       Write a vis-network dependency graph report',
+        '                         (defaults to graph-report.html when no path given)',
         '  --no-scorecard         Skip OpenSSF Scorecard lookups',
         '  --no-vulns             Skip OSV.dev vulnerability lookups',
         '  --no-kev               Skip CISA KEV cross-reference (implies no KEV section)',
@@ -2234,6 +2580,21 @@ async function main() {
         log(`${C.dim}  HTML report written to: ${opts.html}${C.reset}`);
       } catch (err) {
         logErr(`Failed to write HTML report: ${err.message}`);
+      }
+    }
+
+    // Graph report
+    if (opts.graph) {
+      const graphPath = resolve(opts.graph);
+      try {
+        writeFileSync(
+          graphPath,
+          generateGraphReport(results, pkg, opts, kevMatches),
+          'utf8',
+        );
+        log(`${C.dim}  Graph report written to: ${opts.graph}${C.reset}`);
+      } catch (err) {
+        logErr(`Failed to write graph report: ${err.message}`);
       }
     }
 
@@ -2574,6 +2935,28 @@ async function main() {
       log(`${C.dim}  HTML report written to: ${opts.html}${C.reset}`);
     } catch (err) {
       logErr(`Failed to write HTML report: ${err.message}`);
+    }
+  }
+
+  // ── Graph report (opt-in via --graph=<path>) ─────────────────────────────
+  if (opts.graph) {
+    const graphPath = resolve(opts.graph);
+    try {
+      writeFileSync(
+        graphPath,
+        generateGraphReport(
+          results,
+          pkg,
+          opts,
+          kevMatches,
+          lockfileData,
+          lockfilePath,
+        ),
+        'utf8',
+      );
+      log(`${C.dim}  Graph report written to: ${opts.graph}${C.reset}`);
+    } catch (err) {
+      logErr(`Failed to write graph report: ${err.message}`);
     }
   }
 

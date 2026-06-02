@@ -116,7 +116,7 @@ npx supply-chain-inspector <path/to/package.json|url|npm-package> [options]
 
 When an npm package name is provided (not a file path or URL), the tool inspects
 that single package directly against the npm registry. Supports scoped (`@scope/name`)
-and versioned (`name@version`) specs. All CLI options (`--json`, `--html`, `--no-scorecard`,
+and versioned (`name@version`) specs. All CLI options (`--json`, `--html`, `--graph`, `--no-scorecard`,
 etc.) work in this mode.
 
 **Note:** When using a remote URL, the lockfile (`package-lock.json`) is automatically fetched from the same directory. You can also explicitly specify a lockfile URL using `--lockfile=<url>`.
@@ -192,6 +192,7 @@ an early refresh:
 | `--json` | Print the full result array as JSON to stdout |
 | `--output=<path>` | Write JSON to a file (implies `--json`) |
 | `--html[=<path>]` | Write a fully standalone HTML security report to a file (no server or internet connection required to view). Defaults to `report.html` when no path is given. |
+| `--graph[=<path>]` | Write a standalone vis-network dependency graph report to a file. Graph root is `package.json` with scope nodes (`dependencies`, `devDependencies`, etc.) and package child nodes. Defaults to `graph-report.html` when no path is given. |
 
 ### Color
 
@@ -220,6 +221,12 @@ npx supply-chain-inspector package.json --html=report.html
 
 # Write a standalone HTML report with default name (report.html)
 npx supply-chain-inspector package.json --html
+
+# Write a standalone dependency graph report
+npx supply-chain-inspector package.json --graph=graph-report.html
+
+# Graph report with default name (graph-report.html)
+npx supply-chain-inspector package.json --graph
 
 # HTML report + JSON side by side (useful for both humans and tooling)
 npx supply-chain-inspector package.json --html=report.html --output=results.json
@@ -259,6 +266,9 @@ npx supply-chain-inspector package.json --html=report.html
 # Generate an HTML report with default filename (report.html)
 npx supply-chain-inspector package.json --html
 
+# Generate a dependency graph report (package.json -> scopes -> packages)
+npx supply-chain-inspector package.json --graph
+
 # Inspect a remote package.json from GitHub (auto-detects remote lockfile)
 npx supply-chain-inspector https://raw.githubusercontent.com/angular/angular/refs/heads/main/package.json
 
@@ -273,6 +283,10 @@ npx supply-chain-inspector https://raw.githubusercontent.com/user/repo/main/pack
 # Inspect remote package.json with transitive dependencies (requires lockfile)
 npx supply-chain-inspector https://raw.githubusercontent.com/user/repo/main/package.json \
   --include-transitive --findings
+
+# Render transitive dependencies in graph mode (requires lockfile)
+npx supply-chain-inspector package.json \
+  --include-transitive --graph=dependency-graph.html
 
 # Full scan with HTML report, JSON data, and findings detail
 npx supply-chain-inspector package.json \

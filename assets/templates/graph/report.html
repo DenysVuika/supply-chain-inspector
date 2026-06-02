@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Supply Chain Graph Report - {{TITLE}}</title>
+    <style>
+      {{CSS}}
+    </style>
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <h1>Supply Chain Dependency Graph</h1>
+      <div class="meta">
+        <span><strong>{{PKG_LABEL}}</strong></span>
+        <span>Generated {{GENERATED_AT}}</span>
+      </div>
+    </header>
+
+    <div class="summary-bar">{{SUMMARY_CHIPS}}</div>
+
+    <main class="main">
+      <div id="dependency-graph" aria-label="Dependency graph"></div>
+      <p class="hint">
+        Drag nodes to inspect relationships. Zoom with mouse wheel or trackpad.
+      </p>
+    </main>
+
+    <script>
+      const graphPayload = {{GRAPH_PAYLOAD}};
+
+      const container = document.getElementById("dependency-graph");
+      const data = {
+        nodes: new vis.DataSet(graphPayload.nodes),
+        edges: new vis.DataSet(graphPayload.edges),
+      };
+
+      const options = {
+        autoResize: true,
+        interaction: {
+          hover: true,
+          navigationButtons: true,
+          keyboard: true,
+        },
+        physics: {
+          stabilization: false,
+          barnesHut: {
+            springLength: 120,
+            springConstant: 0.02,
+            damping: 0.09,
+          },
+        },
+        edges: {
+          arrows: {
+            to: {
+              enabled: true,
+              scaleFactor: 0.6,
+            },
+          },
+          smooth: {
+            type: "dynamic",
+            roundness: 0.4,
+          },
+          width: 1.4,
+        },
+        nodes: {
+          shape: "box",
+          margin: 8,
+          borderWidth: 1.2,
+          font: {
+            face: "Verdana, Geneva, sans-serif",
+            size: 13,
+          },
+        },
+        groups: {
+          root: {
+            shape: "ellipse",
+            color: {
+              background: "#12375a",
+              border: "#5ac8fa",
+              highlight: { background: "#184a77", border: "#8ce0ff" },
+            },
+            font: { color: "#f2fbff", size: 16, bold: true },
+          },
+          section: {
+            color: {
+              background: "#1b2a22",
+              border: "#75c17e",
+              highlight: { background: "#243a2f", border: "#9de9a6" },
+            },
+            font: { color: "#e9f8eb", size: 13, bold: true },
+          },
+          dependencies: {
+            color: {
+              background: "#17233a",
+              border: "#6ea8fe",
+              highlight: { background: "#20304f", border: "#97c4ff" },
+            },
+            font: { color: "#eef5ff" },
+          },
+          devDependencies: {
+            color: {
+              background: "#342516",
+              border: "#f6b26b",
+              highlight: { background: "#47331f", border: "#ffd19d" },
+            },
+            font: { color: "#fff4e8" },
+          },
+          peerDependencies: {
+            color: {
+              background: "#2b1f35",
+              border: "#c99cff",
+              highlight: { background: "#3a2948", border: "#debfff" },
+            },
+            font: { color: "#f7ebff" },
+          },
+          optionalDependencies: {
+            color: {
+              background: "#2c3020",
+              border: "#bfd97d",
+              highlight: { background: "#3a3f2a", border: "#d8f4a0" },
+            },
+            font: { color: "#f4fbe6" },
+          },
+          transitive: {
+            color: {
+              background: "#33363d",
+              border: "#9aa0ab",
+              highlight: { background: "#444954", border: "#c6cbd6" },
+            },
+            font: { color: "#f0f2f6" },
+          },
+        },
+      };
+
+      const network = new vis.Network(container, data, options);
+      network.once("stabilizationIterationsDone", () => {
+        network.fit({ animation: { duration: 350, easingFunction: "easeInOutQuad" } });
+      });
+    </script>
+  </body>
+</html>
