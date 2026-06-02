@@ -1987,11 +1987,13 @@ function generateGraphReport(
 
   const addEdge = (from, to, extra = {}) => {
     const label = extra.label ?? '';
-    const key = `${from}->${to}|${label}|${extra.className ?? ''}`;
+    const kind = extra.kind ?? 'contains';
+    const key = `${from}->${to}|${label}|${extra.className ?? ''}|${kind}`;
     if (edgeKeys.has(key)) return;
     edgeKeys.add(key);
     const edge = { from, to };
     if (label) edge.label = label;
+    edge.kind = kind;
     if (extra.dashes !== undefined) edge.dashes = extra.dashes;
     if (extra.color) edge.color = extra.color;
     if (extra.width !== undefined) edge.width = extra.width;
@@ -2063,6 +2065,7 @@ function generateGraphReport(
       label,
       group: scope,
       problematic,
+      riskTone: tone,
       ...(tone === 'red'
         ? {
             color: {
@@ -2092,7 +2095,7 @@ function generateGraphReport(
     resultNodeByName.set(r.name, nodeId);
     resultNodeByNameVersion.set(`${r.name}@${version}`, nodeId);
     scopePackageCounts.set(scope, (scopePackageCounts.get(scope) ?? 0) + 1);
-    addEdge(parentScopeId, nodeId);
+    addEdge(parentScopeId, nodeId, { kind: 'contains' });
   }
 
   // Additional dependency nodes for npm-package mode where we only inspect one
@@ -2114,9 +2117,10 @@ function generateGraphReport(
         const depId = addNode(depKey, {
           label: `${depName}\n${depVersionSpec}`,
           group: scope.key,
+          riskTone: 'none',
           title: `${depName}@${depVersionSpec}\nScope: ${scope.key}\nSource: npm package metadata`,
         });
-        addEdge(parentScopeId, depId);
+        addEdge(parentScopeId, depId, { kind: 'contains' });
         scopePackageCounts.set(
           scope.key,
           (scopePackageCounts.get(scope.key) ?? 0) + 1,
@@ -2142,6 +2146,7 @@ function generateGraphReport(
           ) ?? resultNodeByName.get(dep.toName);
         if (!fromId || !toId || fromId === toId) continue;
         addEdge(fromId, toId, {
+          kind: 'depends',
           dashes: true,
           color: { color: '#7e8794', highlight: '#b9c2cf' },
           width: 1,
@@ -2167,7 +2172,15 @@ function generateGraphReport(
     '\n' +
     `<span class="summary-chip">edges: ${edges.length}</span>`;
 
-  const payload = JSON.stringify({ nodes, edges }).replace(/<\//g, '<\\/');
+  const payload = JSON.stringify({
+    nodes,
+    edges,
+    graphMeta: {
+      rootId,
+      defaultView: 'findings',
+      focusMode: 'findings-and-ancestors',
+    },
+  }).replace(/<\//g, '<\\/');
 
   return renderTemplate(htmlTemplate, {
     TITLE: he(pkgLabel),

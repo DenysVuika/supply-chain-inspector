@@ -93,6 +93,33 @@ body {
   padding: 14px 16px 20px;
 }
 
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+.view-btn {
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.view-btn:hover {
+  border-color: rgba(255, 255, 255, 0.42);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.view-btn.is-active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(90, 200, 250, 0.25) inset;
+}
+
 #dependency-graph {
   width: 100%;
   height: min(76vh, 840px);
@@ -141,6 +168,10 @@ body {
 
   .main {
     padding: 10px;
+  }
+
+  .controls {
+    margin-bottom: 8px;
   }
 
   #dependency-graph {

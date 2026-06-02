@@ -21,9 +21,17 @@
     <div class="summary-bar">{{SUMMARY_CHIPS}}</div>
 
     <main class="main">
+      <div class="controls" role="group" aria-label="Graph view controls">
+        <button id="btn-collapse" type="button" class="view-btn">
+          Collapse
+        </button>
+        <button id="btn-refit" type="button" class="view-btn">Refit</button>
+      </div>
       <div id="dependency-graph" aria-label="Dependency graph"></div>
       <p class="hint">
-        Drag nodes to inspect relationships. Zoom with mouse wheel or trackpad.
+        Risk-only graph. Click a scope or package to reveal risky children,
+        double-click to expand one more level, and Shift+click to collapse
+        children.
       </p>
     </main>
 
@@ -31,9 +39,241 @@
       const graphPayload = {{GRAPH_PAYLOAD}};
 
       const container = document.getElementById("dependency-graph");
+      const btnCollapse = document.getElementById("btn-collapse");
+      const btnRefit = document.getElementById("btn-refit");
+
+      const allNodes = graphPayload.nodes || [];
+      const allEdges = graphPayload.edges || [];
+      const graphMeta = graphPayload.graphMeta || {};
+
+      const containsEdges = allEdges.filter((e) => (e.kind || "contains") === "contains");
+      const dependsEdges = allEdges.filter((e) => e.kind === "depends");
+
+      const nodeById = new Map(allNodes.map((n) => [n.id, n]));
+      const childrenById = new Map();
+      const parentsById = new Map();
+
+      function mapPush(map, key, value) {
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push(value);
+      }
+
+      for (const edge of containsEdges) {
+        mapPush(childrenById, edge.from, edge.to);
+        mapPush(parentsById, edge.to, edge.from);
+      }
+
+      const riskOrder = { none: 0, orange: 1, red: 2 };
+      const maxRisk = (a, b) => (riskOrder[a] >= riskOrder[b] ? a : b);
+      const normalizeTone = (tone) => {
+        if (tone === "red" || tone === "orange") return tone;
+        return "none";
+      };
+
+      const ownRiskToneById = new Map(
+        allNodes.map((n) => [n.id, normalizeTone(n.riskTone)]),
+      );
+      const isRiskNode = (node) => riskOrder[ownRiskToneById.get(node.id) || "none"] > 0;
+
+      const descendantRiskById = new Map();
+      function markAncestorsWithTone(nodeId, tone) {
+        if (tone === "none") return;
+        const parents = parentsById.get(nodeId) || [];
+        for (const parentId of parents) {
+          const prev = descendantRiskById.get(parentId) || "none";
+          const next = maxRisk(prev, tone);
+          if (next === prev) continue;
+          descendantRiskById.set(parentId, next);
+          markAncestorsWithTone(parentId, tone);
+        }
+      }
+
+      for (const node of allNodes) {
+        const tone = ownRiskToneById.get(node.id) || "none";
+        if (tone !== "none") markAncestorsWithTone(node.id, tone);
+      }
+
+      const findingsVisibleBase = new Set();
+      for (const node of allNodes) {
+        if (isRiskNode(node) || (descendantRiskById.get(node.id) || "none") !== "none") {
+          findingsVisibleBase.add(node.id);
+        }
+      }
+
+      const levelsById = new Map();
+      function computeLevels(rootId) {
+        if (!rootId || !nodeById.has(rootId)) return;
+        levelsById.clear();
+        const queue = [rootId];
+        levelsById.set(rootId, 0);
+        while (queue.length > 0) {
+          const current = queue.shift();
+          const currentLevel = levelsById.get(current) || 0;
+          const children = childrenById.get(current) || [];
+          for (const childId of children) {
+            if (levelsById.has(childId)) continue;
+            levelsById.set(childId, currentLevel + 1);
+            queue.push(childId);
+          }
+        }
+      }
+      computeLevels(graphMeta.rootId);
+
+      const expanded = new Set();
+      const visible = new Set();
+
+      function ringRadius(level) {
+        const base = 150;
+        const step = 190;
+        return base + Math.max(0, level - 1) * step;
+      }
+
+      function radialSeedNodes(visibleNodeList) {
+        const byLevel = new Map();
+        for (const n of visibleNodeList) {
+          const level = levelsById.get(n.id) ?? 1;
+          if (!byLevel.has(level)) byLevel.set(level, []);
+          byLevel.get(level).push(n);
+        }
+
+        const seeded = [];
+        for (const [level, levelNodes] of byLevel.entries()) {
+          if (level === 0) {
+            for (const n of levelNodes) {
+              seeded.push({ ...n, x: 0, y: 0, fixed: { x: true, y: true } });
+            }
+            continue;
+          }
+
+          const radius = ringRadius(level);
+          const count = levelNodes.length;
+          for (let i = 0; i < count; i += 1) {
+            const angle = (2 * Math.PI * i) / Math.max(1, count) - Math.PI / 2;
+            const x = Math.cos(angle) * radius;
+            const y = Math.sin(angle) * radius;
+            seeded.push({ ...levelNodes[i], x, y });
+          }
+        }
+        return seeded;
+      }
+
+      function cloneColor(color) {
+        if (!color || typeof color !== "object") return null;
+        return JSON.parse(JSON.stringify(color));
+      }
+
+      function riskStyledNode(node) {
+        const copy = { ...node };
+        const isRisk = isRiskNode(node);
+        const inheritedTone = descendantRiskById.get(node.id) || "none";
+        if (!isRisk && inheritedTone !== "none") {
+          const toneStyle =
+            inheritedTone === "red"
+              ? {
+                  border: "#d85f69",
+                  highlightBorder: "#ef8088",
+                  hoverBorder: "#ff9ca3",
+                }
+              : {
+                  border: "#d58a2f",
+                  highlightBorder: "#f0ae57",
+                  hoverBorder: "#ffc36f",
+                };
+          const base = cloneColor(node.color) || {
+            background: "#2f2430",
+            border: toneStyle.border,
+            highlight: { background: "#413043", border: toneStyle.highlightBorder },
+            hover: { background: "#4c3850", border: toneStyle.hoverBorder },
+          };
+          copy.color = {
+            ...base,
+            border: toneStyle.border,
+            highlight: {
+              ...(base.highlight || {}),
+              border: toneStyle.highlightBorder,
+            },
+            hover: {
+              ...(base.hover || {}),
+              border: toneStyle.hoverBorder,
+            },
+          };
+          copy.borderWidth = Math.max(Number(node.borderWidth || 1), 2.2);
+        }
+
+        const children = childrenById.get(node.id) || [];
+        const hiddenChildren = children.filter((childId) => !visible.has(childId)).length;
+        copy.label = hiddenChildren > 0 ? `${node.label}\n(+${hiddenChildren})` : node.label;
+
+        return copy;
+      }
+
+      function applyViewState() {
+        visible.clear();
+
+        for (const node of allNodes) {
+          if (node.group === "root") {
+            visible.add(node.id);
+            continue;
+          }
+          if (node.group === "section" && findingsVisibleBase.has(node.id)) {
+            visible.add(node.id);
+          }
+        }
+
+        for (const expandedId of expanded) {
+          const children = childrenById.get(expandedId) || [];
+          for (const childId of children) {
+            if (!findingsVisibleBase.has(childId)) continue;
+            visible.add(childId);
+          }
+        }
+
+        if (graphMeta.rootId && nodeById.has(graphMeta.rootId)) {
+          visible.add(graphMeta.rootId);
+        }
+
+        const visibleNodes = allNodes
+          .filter((n) => visible.has(n.id))
+          .map((n) => riskStyledNode(n));
+
+        data.nodes.clear();
+        data.nodes.add(radialSeedNodes(visibleNodes));
+
+        data.edges.clear();
+        data.edges.add(
+          containsEdges
+            .filter((e) => visible.has(e.from) && visible.has(e.to))
+            .map((e) => {
+              const fromOwn = ownRiskToneById.get(e.from) || "none";
+              const toOwn = ownRiskToneById.get(e.to) || "none";
+              const fromDesc = descendantRiskById.get(e.from) || "none";
+              const toDesc = descendantRiskById.get(e.to) || "none";
+              const tone = maxRisk(maxRisk(fromOwn, toOwn), maxRisk(fromDesc, toDesc));
+              if (tone === "red") {
+                return {
+                  ...e,
+                  color: { color: "#d85f69", highlight: "#ef8088", hover: "#ff9ca3" },
+                  width: 1.8,
+                };
+              }
+              if (tone === "orange") {
+                return {
+                  ...e,
+                  color: { color: "#d58a2f", highlight: "#f0ae57", hover: "#ffc36f" },
+                  width: 1.7,
+                };
+              }
+              return e;
+            }),
+        );
+        data.edges.add(
+          dependsEdges.filter((e) => visible.has(e.from) && visible.has(e.to)),
+        );
+      }
+
       const data = {
-        nodes: new vis.DataSet(graphPayload.nodes),
-        edges: new vis.DataSet(graphPayload.edges),
+        nodes: new vis.DataSet([]),
+        edges: new vis.DataSet([]),
       };
 
       const options = {
@@ -43,12 +283,27 @@
           navigationButtons: true,
           keyboard: true,
         },
+        layout: {
+          improvedLayout: true,
+          randomSeed: 42,
+          hierarchical: false,
+        },
         physics: {
-          stabilization: false,
-          barnesHut: {
-            springLength: 120,
-            springConstant: 0.02,
-            damping: 0.09,
+          enabled: true,
+          solver: "forceAtlas2Based",
+          forceAtlas2Based: {
+            gravitationalConstant: -42,
+            centralGravity: 0.003,
+            springLength: 155,
+            springConstant: 0.045,
+            damping: 0.72,
+            avoidOverlap: 0.9,
+          },
+          stabilization: {
+            enabled: true,
+            iterations: 420,
+            updateInterval: 25,
+            fit: true,
           },
         },
         edges: {
@@ -60,7 +315,7 @@
           },
           smooth: {
             type: "dynamic",
-            roundness: 0.4,
+            roundness: 0.35,
           },
           width: 1.4,
         },
@@ -68,6 +323,7 @@
           shape: "box",
           margin: 8,
           borderWidth: 1.2,
+          mass: 1.1,
           font: {
             face: "Verdana, Geneva, sans-serif",
             size: 13,
@@ -135,6 +391,71 @@
       };
 
       const network = new vis.Network(container, data, options);
+
+      function expandNode(nodeId, depth = 1) {
+        let changed = false;
+        let frontier = [nodeId];
+        for (let i = 0; i < depth; i += 1) {
+          const next = [];
+          for (const parentId of frontier) {
+            const children = childrenById.get(parentId) || [];
+            const eligibleChildren = children.filter((childId) =>
+              findingsVisibleBase.has(childId),
+            );
+
+            // Leaf or non-risk branch: do not mark as expanded and do not redraw.
+            if (eligibleChildren.length === 0) continue;
+
+            if (!expanded.has(parentId)) {
+              expanded.add(parentId);
+            }
+
+            for (const childId of eligibleChildren) {
+              if (!visible.has(childId)) changed = true;
+              visible.add(childId);
+              next.push(childId);
+            }
+          }
+          frontier = next;
+          if (frontier.length === 0) break;
+        }
+        return changed;
+      }
+
+      function collapseNode(nodeId) {
+        return expanded.delete(nodeId);
+      }
+
+      network.on("click", (params) => {
+        const nodeId = params.nodes?.[0];
+        if (!nodeId) return;
+        let changed = false;
+        if (params.event?.srcEvent?.shiftKey) {
+          changed = collapseNode(nodeId);
+        } else {
+          changed = expandNode(nodeId, 1);
+        }
+        if (changed) applyViewState();
+      });
+
+      network.on("doubleClick", (params) => {
+        const nodeId = params.nodes?.[0];
+        if (!nodeId) return;
+        const changed = expandNode(nodeId, 2);
+        if (changed) applyViewState();
+      });
+
+      btnCollapse.addEventListener("click", () => {
+        if (expanded.size === 0) return;
+        expanded.clear();
+        applyViewState();
+      });
+
+      btnRefit.addEventListener("click", () => {
+        network.fit({ animation: { duration: 280, easingFunction: "easeInOutQuad" } });
+      });
+
+      applyViewState();
       network.once("stabilizationIterationsDone", () => {
         network.fit({ animation: { duration: 350, easingFunction: "easeInOutQuad" } });
       });
