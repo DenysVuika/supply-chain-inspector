@@ -606,18 +606,18 @@ export function generateGraphReport(
   const scopeCounts = scopes
     .map((s) => {
       const count = scopePackageCounts.get(s.key) ?? 0;
+      if (count <= 0) return null;
       return `<span class="summary-chip">${he(s.label)}: ${count}</span>`;
     })
+    .filter(Boolean)
     .join('\n');
 
-  const summaryChips =
-    scopeCounts +
-    '\n' +
-    `<span class="summary-chip ${findingsCount > 0 ? 'warn' : 'ok'}">high/critical findings: ${findingsCount}</span>` +
-    '\n' +
-    `<span class="summary-chip">nodes: ${nodes.length}</span>` +
-    '\n' +
-    `<span class="summary-chip">edges: ${edges.length}</span>`;
+  const summaryParts = [
+    scopeCounts,
+    `<span class="summary-chip ${findingsCount > 0 ? 'warn' : 'ok'}">high/critical findings: ${findingsCount}</span>`,
+  ].filter(Boolean);
+
+  const summaryChips = summaryParts.join('\n');
 
   const payload = JSON.stringify({
     nodes,

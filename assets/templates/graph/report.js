@@ -309,7 +309,7 @@ const options = {
   autoResize: true,
   interaction: {
     hover: true,
-    navigationButtons: true,
+    navigationButtons: false,
     keyboard: true,
   },
   layout: {
