@@ -5,7 +5,7 @@ import {
   clearTemplateCache,
   renderTemplate,
   getTemplatesDir,
-} from "../templates.js";
+} from "./templates.js";
 
 describe("renderTemplate()", () => {
   it("replaces a single placeholder", () => {

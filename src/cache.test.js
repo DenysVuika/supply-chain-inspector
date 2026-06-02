@@ -17,11 +17,11 @@ function writeCorruptFile(file) {
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe("safeName()", () => {
-  /** @type {import("../cache.js")} */
+  /** @type {import("./cache.js")} */
   let cache;
 
   beforeAll(async () => {
-    cache = await import("../cache.js");
+    cache = await import("./cache.js");
   });
 
   it("preserves a plain package name", () => {
@@ -46,12 +46,12 @@ describe("safeName()", () => {
 });
 
 describe("initCache() / getCacheDir() / getScriptDir()", () => {
-  /** @type {import("../cache.js")} */
+  /** @type {import("./cache.js")} */
   let cache;
 
   beforeEach(async () => {
     vi.resetModules();
-    cache = await import("../cache.js");
+    cache = await import("./cache.js");
   });
 
   it("creates the default cache directory and returns its path", () => {
@@ -93,13 +93,13 @@ describe("initCache() / getCacheDir() / getScriptDir()", () => {
 });
 
 describe("writeToCache() / readFromCache()", () => {
-  /** @type {import("../cache.js")} */
+  /** @type {import("./cache.js")} */
   let cache;
   let cacheDir;
 
   beforeEach(async () => {
     vi.resetModules();
-    cache = await import("../cache.js");
+    cache = await import("./cache.js");
     cacheDir = tmpCacheDir();
     cache.initCache(cacheDir);
   });
@@ -117,7 +117,7 @@ describe("writeToCache() / readFromCache()", () => {
 
   it("returns null when no cache directory is set", async () => {
     vi.resetModules();
-    const cache2 = await import("../cache.js");
+    const cache2 = await import("./cache.js");
     const result = cache2.readFromCache("anything", 60_000);
     expect(result).toBeNull();
   });
@@ -179,11 +179,11 @@ describe("writeToCache() / readFromCache()", () => {
 });
 
 describe("module-level in-memory caches", () => {
-  /** @type {import("../cache.js")} */
+  /** @type {import("./cache.js")} */
   let cache;
 
   beforeAll(async () => {
-    cache = await import("../cache.js");
+    cache = await import("./cache.js");
   });
 
   it("npmCache is a Map", () => {
@@ -201,11 +201,11 @@ describe("module-level in-memory caches", () => {
 });
 
 describe("TTL constants", () => {
-  /** @type {import("../cache.js")} */
+  /** @type {import("./cache.js")} */
   let cache;
 
   beforeAll(async () => {
-    cache = await import("../cache.js");
+    cache = await import("./cache.js");
   });
 
   it("TTL_NPM is 6 hours", () => {

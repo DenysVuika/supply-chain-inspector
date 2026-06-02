@@ -60,7 +60,7 @@ npm install -g supply-chain-inspector
 nsci path/to/package.json
 
 # Or clone/copy the script and run it locally
-node inspect-dependencies.js path/to/package.json
+npx supply-chain-inspector path/to/package.json
 ```
 
 Typical output:
@@ -101,7 +101,7 @@ npx supply-chain-inspector <path/to/package.json|url> [options]
 nsci <path/to/package.json|url> [options]
 
 # Or if running the script directly
-node inspect-dependencies.js <path/to/package.json|url> [options]
+npx supply-chain-inspector <path/to/package.json|url> [options]
 ```
 
 **Input can be:**
@@ -196,28 +196,28 @@ for JSON so you can pipe cleanly.
 
 ```bash
 # Report only — clean terminal view, no JSON noise
-node inspect-dependencies.js package.json
+npx supply-chain-inspector package.json
 
 # Report on stderr + JSON on stdout — pipe JSON to another tool
-node inspect-dependencies.js package.json --json
+npx supply-chain-inspector package.json --json
 
 # Report on stderr + JSON saved to a file — review both independently
-node inspect-dependencies.js package.json --output=results.json
+npx supply-chain-inspector package.json --output=results.json
 
 # Write a standalone HTML report — open report.html in any browser
-node inspect-dependencies.js package.json --html=report.html
+npx supply-chain-inspector package.json --html=report.html
 
 # Write a standalone HTML report with default name (report.html)
-node inspect-dependencies.js package.json --html
+npx supply-chain-inspector package.json --html
 
 # HTML report + JSON side by side (useful for both humans and tooling)
-node inspect-dependencies.js package.json --html=report.html --output=results.json
+npx supply-chain-inspector package.json --html=report.html --output=results.json
 
 # Suppress the report, get only JSON (useful for scripting)
-node inspect-dependencies.js package.json --json 2>/dev/null
+npx supply-chain-inspector package.json --json 2>/dev/null
 
 # Pipe JSON straight into an AI tool
-node inspect-dependencies.js package.json --json | llm "analyze these deps"
+npx supply-chain-inspector package.json --json | llm "analyze these deps"
 ```
 
 ---
@@ -226,77 +226,77 @@ node inspect-dependencies.js package.json --json | llm "analyze these deps"
 
 ```bash
 # Scan all dependency groups, save JSON for later AI analysis
-node inspect-dependencies.js package.json \
+npx supply-chain-inspector package.json \
   --include-dev --include-peer \
   --output=scan.json
 
 # Generate an HTML report for easy sharing with your team
-node inspect-dependencies.js package.json --html=report.html
+npx supply-chain-inspector package.json --html=report.html
 
 # Generate an HTML report with default filename (report.html)
-node inspect-dependencies.js package.json --html
+npx supply-chain-inspector package.json --html
 
 # Inspect a remote package.json from GitHub (auto-detects remote lockfile)
-node inspect-dependencies.js https://raw.githubusercontent.com/angular/angular/refs/heads/main/package.json
+npx supply-chain-inspector https://raw.githubusercontent.com/angular/angular/refs/heads/main/package.json
 
 # Inspect remote package.json with full scan and HTML report
-node inspect-dependencies.js https://raw.githubusercontent.com/user/repo/main/package.json \
+npx supply-chain-inspector https://raw.githubusercontent.com/user/repo/main/package.json \
   --include-dev --html=report.html
 
 # Inspect remote package.json with explicit remote lockfile URL
-node inspect-dependencies.js https://raw.githubusercontent.com/user/repo/main/package.json \
+npx supply-chain-inspector https://raw.githubusercontent.com/user/repo/main/package.json \
   --lockfile=https://raw.githubusercontent.com/user/repo/main/package-lock.json
 
 # Inspect remote package.json with transitive dependencies (requires lockfile)
-node inspect-dependencies.js https://raw.githubusercontent.com/user/repo/main/package.json \
+npx supply-chain-inspector https://raw.githubusercontent.com/user/repo/main/package.json \
   --include-transitive --findings
 
 # Full scan with HTML report, JSON data, and findings detail
-node inspect-dependencies.js package.json \
+npx supply-chain-inspector package.json \
   --include-dev --include-peer \
   --output=scan.json --html=report.html --findings
 
 # Full deep scan — all groups, all transitive deps, with findings detail
-node inspect-dependencies.js package.json \
+npx supply-chain-inspector package.json \
   --include-dev --include-peer --include-optional --include-transitive \
   --findings
 
 # Quick scan — skip Scorecard (no outbound calls to api.scorecard.dev)
-node inspect-dependencies.js package.json --no-scorecard
+npx supply-chain-inspector package.json --no-scorecard
 
 # High concurrency for large lockfiles (mind API rate limits)
-node inspect-dependencies.js package.json --concurrency=10
+npx supply-chain-inspector package.json --concurrency=10
 
 # CI-friendly: plain text, no color, output to log file
-NO_COLOR=1 node inspect-dependencies.js package.json 2>&1 | tee security-report.txt
+NO_COLOR=1 npx supply-chain-inspector package.json 2>&1 | tee security-report.txt
 
 # Fail the build if any critical vulnerabilities are found (default behavior)
-node inspect-dependencies.js package.json --fail-on=critical
+npx supply-chain-inspector package.json --fail-on=critical
 
 # Fail the build on high or critical vulnerabilities
-node inspect-dependencies.js package.json --fail-on=high
+npx supply-chain-inspector package.json --fail-on=high
 
 # Fail the build on any vulnerability (low, medium, high, or critical)
-node inspect-dependencies.js package.json --fail-on=low
+npx supply-chain-inspector package.json --fail-on=low
 
 # Fail the build if any dependency uses a copyleft license (GPL, AGPL, LGPL)
 # (use the included test fixture to try this out)
-node inspect-dependencies.js assets/test-license-package.json --fail-licenses="GPL,AGPL,LGPL"
+npx supply-chain-inspector https://raw.githubusercontent.com/DenysVuika/supply-chain-inspector/main/assets/test-license-package.json --fail-licenses="GPL,AGPL,LGPL"
 
 # CI pipeline with strict security policy (fail on medium+)
-node inspect-dependencies.js package.json \
+npx supply-chain-inspector package.json \
   --include-dev --include-peer \
   --fail-on=medium \
   --html=report.html
 
 # Force fresh data, bypassing any cached responses
-node inspect-dependencies.js package.json --no-cache
+npx supply-chain-inspector package.json --no-cache
 
 # Share a single cache across multiple projects to avoid redundant API calls
-node inspect-dependencies.js package.json --cache-dir=~/.supply-chain-cache
+npx supply-chain-inspector package.json --cache-dir=~/.supply-chain-cache
 
 # Inspect only production deps with narrow version history (fastest)
-node inspect-dependencies.js package.json --version-history=2 --no-scorecard
+npx supply-chain-inspector package.json --version-history=2 --no-scorecard
 ```
 
 ---
@@ -466,7 +466,7 @@ When matches are found:
 A ready-made test fixture is included at [`assets/test-kev-package.json`](assets/test-kev-package.json) — it pins known-vulnerable versions of several packages so you can reproduce KEV matches locally:
 
 ```bash
-node inspect-dependencies.js assets/test-kev-package.json
+npx supply-chain-inspector https://raw.githubusercontent.com/DenysVuika/supply-chain-inspector/main/assets/test-kev-package.json
 ```
 
 Example CLI output when matches exist:
@@ -564,7 +564,7 @@ own failure box before the process exits.
 # GitHub Actions example — fail on high/critical vulns AND any KEV match
 - name: Supply chain scan
   run: |
-    NO_COLOR=1 node inspect-dependencies.js package.json \
+    NO_COLOR=1 npx supply-chain-inspector package.json \
       --findings \
       --fail-on=high \
       --output=supply-chain.json \

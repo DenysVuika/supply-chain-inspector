@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const TEMPLATES_DIR = resolve(__dirname, "assets", "templates");
+const TEMPLATES_DIR = resolve(__dirname, "..", "assets", "templates");
 const HTML_DIR = resolve(TEMPLATES_DIR, "html");
 const CSS_PATH = resolve(HTML_DIR, "report.css");
 const HTML_PATH = resolve(HTML_DIR, "report.html");
