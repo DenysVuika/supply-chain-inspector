@@ -11,6 +11,7 @@
     "src/inspect.js",
     "src/logger.js",
     "src/cache.js",
+    "src/pkg.js",
     "src/templates.js",
     "assets/templates/html/report.css",
     "assets/templates/html/report.html",
