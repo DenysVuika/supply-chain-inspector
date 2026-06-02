@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isNpmPackageName, parsePackageSpec } from "./inspect.js";
+import { isNpmPackageName, parsePackageSpec } from "./pkg.js";
 
 // ── isNpmPackageName ─────────────────────────────────────────────────────────
 
