@@ -105,6 +105,25 @@ body {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
 }
 
+/* vis-network controls: neutral white controls on dark canvas */
+#dependency-graph .vis-navigation {
+  right: 10px;
+  top: 10px;
+}
+
+#dependency-graph .vis-button {
+  border: 1px solid rgba(227, 236, 247, 0.42) !important;
+  border-radius: 6px !important;
+  background-color: rgba(255, 255, 255, 0.08) !important;
+  box-shadow: none !important;
+  filter: grayscale(1) brightness(2.1) contrast(1.2);
+}
+
+#dependency-graph .vis-button:hover {
+  background-color: rgba(255, 255, 255, 0.18) !important;
+  border-color: rgba(255, 255, 255, 0.8) !important;
+}
+
 .hint {
   color: var(--muted);
   margin: 10px 4px 0;

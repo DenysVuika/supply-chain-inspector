@@ -1968,6 +1968,15 @@ function generateGraphReport(
     return false;
   };
 
+  const graphRiskTone = (r) => {
+    const version = r.resolvedVersion ?? r.versionSpec ?? '?';
+    const hasVulns = (r.vulnerabilities?.summary?.total ?? 0) > 0;
+    const hasKev = kevSet.has(`${r.name}@${version}`);
+    if (hasVulns || hasKev) return 'red';
+    if (isProblematic(r)) return 'orange';
+    return 'none';
+  };
+
   const addNode = (key, node) => {
     if (nodeIds.has(key)) return nodeIds.get(key);
     const id = nextId++;
@@ -2001,7 +2010,12 @@ function generateGraphReport(
   });
 
   const scopeNodeIds = new Map();
-  for (const scope of scopes) {
+  const scopeDefs = new Map(scopes.map((scope) => [scope.key, scope]));
+
+  const ensureScopeNode = (scopeKey) => {
+    if (scopeNodeIds.has(scopeKey)) return scopeNodeIds.get(scopeKey);
+    const scope = scopeDefs.get(scopeKey) ?? scopeDefs.get('dependencies');
+    if (!scope) return null;
     const id = addNode(`scope:${scope.key}`, {
       label: scope.label,
       group: 'section',
@@ -2009,11 +2023,12 @@ function generateGraphReport(
     });
     scopeNodeIds.set(scope.key, id);
     addEdge(rootId, id);
-  }
+    return id;
+  };
 
   const normalizeScope = (scope) => {
     if (!scope || scope === 'direct') return 'dependencies';
-    if (scopeNodeIds.has(scope)) return scope;
+    if (scopeDefs.has(scope)) return scope;
     return 'dependencies';
   };
 
@@ -2023,7 +2038,7 @@ function generateGraphReport(
   for (const r of results) {
     const scope = normalizeScope(r.scope);
     const parentScopeId =
-      scopeNodeIds.get(scope) ?? scopeNodeIds.get('dependencies');
+      ensureScopeNode(scope) ?? ensureScopeNode('dependencies');
     const version = r.resolvedVersion ?? r.versionSpec ?? '?';
     const pkgKey = `pkg:${r.name}@${version}`;
     const vulnTotal = vulnerabilitiesCount(r);
@@ -2043,11 +2058,12 @@ function generateGraphReport(
       titleParts.push('Package metadata not found in npm registry');
 
     const problematic = isProblematic(r);
+    const tone = graphRiskTone(r);
     const nodeId = addNode(pkgKey, {
       label,
       group: scope,
       problematic,
-      ...(problematic
+      ...(tone === 'red'
         ? {
             color: {
               background: '#4a1616',
@@ -2058,7 +2074,18 @@ function generateGraphReport(
             borderWidth: 2.4,
             font: { color: '#fff2f2' },
           }
-        : {}),
+        : tone === 'orange'
+          ? {
+              color: {
+                background: '#4a3110',
+                border: '#ffb347',
+                highlight: { background: '#5b3c13', border: '#ffd08a' },
+                hover: { background: '#6a4718', border: '#ffbf66' },
+              },
+              borderWidth: 2,
+              font: { color: '#fff4de' },
+            }
+          : {}),
       title: titleParts.join('\n'),
     });
 
@@ -2073,9 +2100,10 @@ function generateGraphReport(
   const additionalDeps = graphContext?.scopeDependencies;
   if (additionalDeps && typeof additionalDeps === 'object') {
     for (const scope of scopes) {
-      const parentScopeId = scopeNodeIds.get(scope.key);
-      if (!parentScopeId) continue;
       const deps = additionalDeps[scope.key] ?? [];
+      if (deps.length === 0) continue;
+      const parentScopeId = ensureScopeNode(scope.key);
+      if (!parentScopeId) continue;
       for (const dep of deps) {
         const depName = dep?.name;
         if (!depName) continue;
