@@ -12,9 +12,10 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Resolved path of this script file — used to anchor the default cache directory
-// so the cache always lives next to inspect-dependencies.js regardless of cwd.
-const _scriptDir = dirname(fileURLToPath(import.meta.url));
+// Resolved path of the project root (one level up from src/) — used to anchor
+// the default cache directory so the cache always lives at the project root
+// regardless of cwd.
+const _scriptDir = dirname(dirname(fileURLToPath(import.meta.url)));
 
 // ── File-cache TTLs ───────────────────────────────────────────────────────────
 // npm registry docs change when new versions are published → refresh every 6 h.
@@ -149,7 +150,7 @@ export function getCacheDir() {
 }
 
 /**
- * Get the script directory path (where inspect-dependencies.js is located).
+ * Get the script directory path (project root).
  * @returns {string} The script directory path
  */
 export function getScriptDir() {

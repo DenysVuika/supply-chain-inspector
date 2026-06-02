@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * inspect-dependencies.js
+ * inspect.js
  *
  * Standalone supply chain data collector for npm packages.
  * Reads a package.json, fetches security-relevant data from public APIs
@@ -13,14 +13,14 @@
  *
  * ─── Usage ────────────────────────────────────────────────────────────────────
  *
- node scripts/inspect-dependencies.js <path/to/package.json|url> [options]
+ npx supply-chain-inspector <path/to/package.json|url> [options]
 
  Examples:
    # Local file
-   node scripts/inspect-dependencies.js package.json
+   npx supply-chain-inspector package.json
 
    # Remote URL (GitHub, raw content, etc.)
-   node scripts/inspect-dependencies.js https://raw.githubusercontent.com/angular/angular/refs/heads/main/package.json
+   npx supply-chain-inspector https://raw.githubusercontent.com/angular/angular/refs/heads/main/package.json
  *
  * ─── Options ──────────────────────────────────────────────────────────────────
  *
@@ -82,66 +82,66 @@
  *   JSON is never written unless explicitly requested:
  *
  *   # Report only — clean terminal view, no JSON noise
- *   node scripts/inspect-dependencies.js package.json
+ *   npx supply-chain-inspector package.json
  *
  *   # Report on stderr + JSON on stdout — pipe JSON to another tool
- *   node scripts/inspect-dependencies.js package.json --json
+ *   npx supply-chain-inspector package.json --json
  *
  *   # Report on stderr + JSON saved to file — review both independently
- *   node scripts/inspect-dependencies.js package.json --output=results.json
+ *   npx supply-chain-inspector package.json --output=results.json
  *
  *   # Write a standalone HTML report — open in any browser, no server needed
- *   node scripts/inspect-dependencies.js package.json --html=report.html
+ *   npx supply-chain-inspector package.json --html=report.html
  *
  *   # HTML report + JSON side by side (useful for both humans and tooling)
- *   node scripts/inspect-dependencies.js package.json --output=scan.json --html=report.html
+ *   npx supply-chain-inspector package.json --output=scan.json --html=report.html
  *
  *   # Suppress the report, get only JSON (e.g. for scripting)
- *   node scripts/inspect-dependencies.js package.json --json 2>/dev/null
+ *   npx supply-chain-inspector package.json --json 2>/dev/null
  *
  *   # Pipe JSON straight to an AI tool
- *   node scripts/inspect-dependencies.js package.json --json | llm "analyze these deps"
+ *   npx supply-chain-inspector package.json --json | llm "analyze these deps"
  *
  * ─── Common recipes ───────────────────────────────────────────────────────────
  *
  *   # Scan all dependency groups, save JSON for later AI analysis
- *   node scripts/inspect-dependencies.js package.json \
+ *   npx supply-chain-inspector package.json \
  *     --include-dev --include-peer \
  *     --output=scan.json
  *
  *   # Full scan with both HTML report and JSON output
- *   node scripts/inspect-dependencies.js package.json \
+ *   npx supply-chain-inspector package.json \
  *     --include-dev --include-peer \
  *     --output=scan.json --html=report.html
  *
  *   # Inspect a remote package.json from a GitHub repository
- *   node scripts/inspect-dependencies.js https://raw.githubusercontent.com/angular/angular/refs/heads/main/package.json
+ *   npx supply-chain-inspector https://raw.githubusercontent.com/angular/angular/refs/heads/main/package.json
  *
  *   # Inspect remote package.json with full scan (auto-detects remote lockfile)
- *   node scripts/inspect-dependencies.js https://raw.githubusercontent.com/user/repo/main/package.json \
+ *   npx supply-chain-inspector https://raw.githubusercontent.com/user/repo/main/package.json \
  *     --include-dev --html=report.html
  *
  *   # Inspect remote package.json with explicit remote lockfile URL
- *   node scripts/inspect-dependencies.js https://raw.githubusercontent.com/user/repo/main/package.json \
+ *   npx supply-chain-inspector https://raw.githubusercontent.com/user/repo/main/package.json \
  *     --lockfile=https://raw.githubusercontent.com/user/repo/main/package-lock.json
  *
  *   # Quick scan — skip Scorecard (no outbound calls to api.scorecard.dev)
- *   node scripts/inspect-dependencies.js package.json --no-scorecard
+ *   npx supply-chain-inspector package.json --no-scorecard
  *
  *   # High concurrency for large lockfiles (mind rate limits)
- *   node scripts/inspect-dependencies.js package.json --concurrency=10
+ *   npx supply-chain-inspector package.json --concurrency=10
  *
  *   # Fail on GPL/AGPL licenses (for copyleft policies in CI)
- *   node scripts/inspect-dependencies.js package.json --fail-licenses="GPL,AGPL"
+ *   npx supply-chain-inspector package.json --fail-licenses="GPL,AGPL"
  *
  *   # CI-friendly: plain text report, exit code reflects nothing (advisory only)
- *   NO_COLOR=1 node scripts/inspect-dependencies.js package.json 2>&1
+ *   NO_COLOR=1 npx supply-chain-inspector package.json 2>&1
  *
  *   # Force fresh data, ignoring any cached responses
- *   node scripts/inspect-dependencies.js package.json --no-cache
+ *   npx supply-chain-inspector package.json --no-cache
  *
  *   # Use a shared cache directory for multiple projects
- *   node scripts/inspect-dependencies.js package.json --cache-dir=~/.supply-chain-cache
+ *   npx supply-chain-inspector package.json --cache-dir=~/.supply-chain-cache
  *
  * ─── Data sources ─────────────────────────────────────────────────────────────
  *
@@ -2086,7 +2086,7 @@ async function main() {
   if (!opts.packageJsonPath) {
     process.stderr.write(
       [
-        "Usage: node inspect-dependencies.js <path/to/package.json|url> [options]",
+        "Usage: npx supply-chain-inspector <path/to/package.json|url> [options]",
         "",
         "Options:",
         "  --include-dev          Include devDependencies",
