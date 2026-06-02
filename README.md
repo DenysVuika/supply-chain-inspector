@@ -52,6 +52,10 @@
 # Run directly via npx — no install needed
 npx supply-chain-inspector path/to/package.json
 
+# Inspect a single npm package directly (no package.json needed)
+npx supply-chain-inspector lodash-es
+npx supply-chain-inspector @nx/jest
+
 # Or use a URL to a remote package.json
 npx supply-chain-inspector https://raw.githubusercontent.com/angular/angular/refs/heads/main/package.json
 
@@ -65,7 +69,7 @@ npx supply-chain-inspector path/to/package.json
 
 Typical output:
 
-```
+```text
 Supply Chain Inspector
 Package: my-app 1.0.0
 Source:  /home/user/my-app/package.json
@@ -93,20 +97,27 @@ Inspecting 14 package(s) — concurrency: 5
 
 ## Usage
 
-```
+```shell
 # Via npx (no install required)
-npx supply-chain-inspector <path/to/package.json|url> [options]
+npx supply-chain-inspector <path/to/package.json|url|npm-package> [options]
 
 # Via short alias (requires: npm install -g supply-chain-inspector)
-nsci <path/to/package.json|url> [options]
+nsci <path/to/package.json|url|npm-package> [options]
 
 # Or if running the script directly
-npx supply-chain-inspector <path/to/package.json|url> [options]
+npx supply-chain-inspector <path/to/package.json|url|npm-package> [options]
 ```
 
 **Input can be:**
+
+- **npm package name** — inspect a single package directly: `lodash-es`, `@nx/jest`, `react@18.2.0`
 - Local file path: `package.json` or `path/to/package.json`
 - Remote URL: `https://raw.githubusercontent.com/user/repo/refs/heads/main/package.json`
+
+When an npm package name is provided (not a file path or URL), the tool inspects
+that single package directly against the npm registry. Supports scoped (`@scope/name`)
+and versioned (`name@version`) specs. All CLI options (`--json`, `--html`, `--no-scorecard`,
+etc.) work in this mode.
 
 **Note:** When using a remote URL, the lockfile (`package-lock.json`) is automatically fetched from the same directory. You can also explicitly specify a lockfile URL using `--lockfile=<url>`.
 
@@ -119,7 +130,7 @@ npx supply-chain-inspector <path/to/package.json|url> [options]
 By default only `dependencies` (production) are scanned.
 
 | Flag | Description |
-|---|---|
+| --- | --- |
 | `--include-dev` | Also inspect `devDependencies` |
 | `--include-peer` | Also inspect `peerDependencies` |
 | `--include-optional` | Also inspect `optionalDependencies` |
@@ -127,12 +138,12 @@ By default only `dependencies` (production) are scanned.
 
 ### Version History
 
-```
+```text
 --version-history=<N>    Versions to keep per package (default: 10, min: 2)
 ```
 
 | Value | What it enables |
-|---|---|
+| --- | --- |
 | `2` | Downgrade / major-jump detection only |
 | `5` | + Rapid publish burst + dormancy detection |
 | `10` | + Cadence baseline (recommended) |
@@ -141,7 +152,7 @@ By default only `dependencies` (production) are scanned.
 ### Data Collection
 
 | Flag | Description |
-|---|---|
+| --- | --- |
 | `--concurrency=<N>` | Max parallel package fetches (default: `5`) |
 | `--lockfile=<path\|url>` | Path or URL to `package-lock.json` (auto-detected next to `package.json` if omitted; for remote URLs, auto-detects `package-lock.json` in same directory) |
 | `--no-scorecard` | Skip OpenSSF Scorecard lookups (faster, useful offline) |
@@ -151,7 +162,7 @@ By default only `dependencies` (production) are scanned.
 ### Cache
 
 | Flag | Description |
-|---|---|
+| --- | --- |
 | `--cache-dir=<path>` | Directory for cached API responses (default: `.cache/` next to the script) |
 | `--no-cache` | Disable file cache; always fetch live data |
 
@@ -159,7 +170,7 @@ Cache TTLs are fixed and not configurable. Delete cache files manually to force
 an early refresh:
 
 | Source | TTL | Rationale |
-|---|---|---|
+| --- | --- | --- |
 | npm Registry | 6 h | Refreshed when new versions are published |
 | OSV.dev | 6 h | Vulnerability data is stable within hours |
 | OpenSSF Scorecard | 24 h | Scores are recomputed weekly by OpenSSF |
@@ -168,7 +179,7 @@ an early refresh:
 ### Report
 
 | Flag | Description |
-|---|---|
+| --- | --- |
 | `--findings` | Show per-package findings detail below the summary table. By default only the table is shown; a one-line hint indicates how many packages have signals. |
 | `--fail-on=<level>` | Exit with code 1 if vulnerabilities at or above the specified severity are found. Valid levels: `low`, `medium`, `high`, `critical` (default: `critical`). When set to `low`, any vulnerability will cause a failure. When set to `critical`, only critical vulnerabilities trigger a failure. |
 | `--fail-licenses=<licenses>` | Exit with code 1 if any dependency uses a restricted (copyleft) license. Accepts a comma-separated list: `GPL,AGPL,LGPL`. Normalizes automatically: `GPL-3.0-or-later` → `GPL-3.0` → `GPL`. Works independently of `--fail-on`. |
@@ -177,7 +188,7 @@ an early refresh:
 ### Output
 
 | Flag | Description |
-|---|---|
+| --- | --- |
 | `--json` | Print the full result array as JSON to stdout |
 | `--output=<path>` | Write JSON to a file (implies `--json`) |
 | `--html[=<path>]` | Write a fully standalone HTML security report to a file (no server or internet connection required to view). Defaults to `report.html` when no path is given. |
@@ -225,6 +236,18 @@ npx supply-chain-inspector package.json --json | llm "analyze these deps"
 ## Common Recipes
 
 ```bash
+# Inspect a single npm package directly — quick security check
+npx supply-chain-inspector lodash-es
+
+# Inspect a scoped package with a pinned version
+npx supply-chain-inspector @angular/core@17.0.0
+
+# Inspect a package and save JSON for AI analysis
+npx supply-chain-inspector react --json > react-audit.json
+
+# Inspect a package and generate an HTML report
+npx supply-chain-inspector express --html=express-report.html
+
 # Scan all dependency groups, save JSON for later AI analysis
 npx supply-chain-inspector package.json \
   --include-dev --include-peer \
@@ -307,7 +330,7 @@ The `--findings` flag expands details for any package that triggers one or more
 of the following signals:
 
 | Signal | Meaning |
-|---|---|
+| --- | --- |
 | `vulns` | One or more known CVEs or advisories from OSV.dev |
 | `scripts` | Package declares lifecycle scripts (`preinstall`, `postinstall`, `prepare`, etc.) |
 | `low_scorecard` | OpenSSF Scorecard score below 5 / 10 |
@@ -414,12 +437,12 @@ Each element of the output array represents one inspected package:
 ### Field Reference
 
 | Field | Description |
-|---|---|
+| --- | --- |
 | `name` | Package name as it appears in `package.json` |
 | `versionSpec` | The version range or tag from `package.json` (e.g. `^4.18.2`) |
 | `resolvedVersion` | The actual version that was inspected (from lockfile or registry) |
 | `lockfileVersion` | The version pinned in `package-lock.json`, if available |
-| `scope` | Which dependency group this came from (`dependencies`, `devDependencies`, `peerDependencies`, `optionalDependencies`, `transitive`) |
+| `scope` | Which dependency group this came from (`dependencies`, `devDependencies`, `peerDependencies`, `optionalDependencies`, `transitive`, `direct` when inspecting a single npm package) |
 | `notFound` | `true` if the package could not be found on the npm registry |
 | `collectedAt` | ISO 8601 timestamp of when the data was collected |
 | `registry.hasInstallScripts` | `true` if the package declares any lifecycle scripts |
@@ -436,7 +459,7 @@ Each element of the output array represents one inspected package:
 ## Data Sources
 
 | Source | URL | Data provided |
-|---|---|---|
+| --- | --- | --- |
 | npm Registry | `https://registry.npmjs.org` | Package metadata, version history, maintainers, install scripts, tarball integrity |
 | OSV.dev | `https://api.osv.dev/v1/query` | Known CVEs and security advisories |
 | OpenSSF Scorecard | `https://api.scorecard.dev` | Project health (17 automated checks) |
@@ -471,7 +494,7 @@ npx supply-chain-inspector https://raw.githubusercontent.com/DenysVuika/supply-c
 
 Example CLI output when matches exist:
 
-```
+```text
 ──────────────────────────────────────────────────────────────────────────────────────────
   ▲ KNOWN EXPLOITED VULNERABILITIES (CISA KEV)  ·  2 matches with actively exploited CVEs
 ──────────────────────────────────────────────────────────────────────────────────────────
@@ -502,7 +525,7 @@ severity rating. The two failure paths are complementary and can both fire in
 the same run:
 
 | Condition | Exit code |
-|---|---|
+| --- | --- |
 | KEV match(es) found (and `--no-kev` not set) | `1` — always |
 | Vulnerabilities at or above `--fail-on` threshold | `1` |
 | No KEV matches and no `--fail-on` trigger | `0` |

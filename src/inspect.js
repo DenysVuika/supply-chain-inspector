@@ -13,7 +13,7 @@
  *
  * ─── Usage ────────────────────────────────────────────────────────────────────
  *
- npx supply-chain-inspector <path/to/package.json|url> [options]
+ npx supply-chain-inspector <path/to/package.json|url|npm-package-name> [options]
 
  Examples:
    # Local file
@@ -21,6 +21,11 @@
 
    # Remote URL (GitHub, raw content, etc.)
    npx supply-chain-inspector https://raw.githubusercontent.com/angular/angular/refs/heads/main/package.json
+
+   # Direct npm package inspection (no package.json needed)
+   npx supply-chain-inspector lodash-es
+   npx supply-chain-inspector @nx/jest
+   npx supply-chain-inspector react@18.2.0
  *
  * ─── Options ──────────────────────────────────────────────────────────────────
  *
@@ -150,10 +155,10 @@
  *   OpenSSF Scorecard https://api.scorecard.dev       project health (17 checks)
  */
 
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { resolve, dirname, basename, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { log, logOk, logErr, logWarn } from "./logger.js";
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { resolve, dirname, basename, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { log, logOk, logErr, logWarn } from './logger.js';
 import {
   getScriptDir,
   TTL_NPM,
@@ -169,29 +174,31 @@ import {
   readFromCache,
   writeToCache,
   fileCacheStats,
-} from "./cache.js";
-import { loadCssTemplate, loadHtmlTemplate, renderTemplate } from "./templates.js";
+} from './cache.js';
+import {
+  loadCssTemplate,
+  loadHtmlTemplate,
+  renderTemplate,
+} from './templates.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const NPM_REGISTRY = "https://registry.npmjs.org";
-const OSV_API = "https://api.osv.dev/v1";
-const SCORECARD_API = "https://api.scorecard.dev";
+const NPM_REGISTRY = 'https://registry.npmjs.org';
+const OSV_API = 'https://api.osv.dev/v1';
+const SCORECARD_API = 'https://api.scorecard.dev';
 const KEV_URL =
-  "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
+  'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json';
 
 const LIFECYCLE_KEYS = [
-  "preinstall",
-  "install",
-  "postinstall",
-  "preuninstall",
-  "postuninstall",
-  "prepare",
-  "prepack",
-  "postpack",
+  'preinstall',
+  'install',
+  'postinstall',
+  'preuninstall',
+  'postuninstall',
+  'prepare',
+  'prepack',
+  'postpack',
 ];
-
-
 
 // ─── CLI argument parsing ─────────────────────────────────────────────────────
 
@@ -215,97 +222,100 @@ function parseArgs(argv) {
     noCache: false,
     includeTransitive: false,
     showFindings: false,
-    failOn: "critical", // 'low' | 'medium' | 'high' | 'critical'
+    failOn: 'critical', // 'low' | 'medium' | 'high' | 'critical'
     failLicenses: null,
   };
 
   for (const arg of args) {
-    if (arg === "--include-dev") {
+    if (arg === '--include-dev') {
       opts.includeDev = true;
       continue;
     }
-    if (arg === "--include-peer") {
+    if (arg === '--include-peer') {
       opts.includePeer = true;
       continue;
     }
-    if (arg === "--include-optional") {
+    if (arg === '--include-optional') {
       opts.includeOptional = true;
       continue;
     }
-    if (arg === "--findings") {
+    if (arg === '--findings') {
       opts.showFindings = true;
       continue;
     }
-    if (arg === "--include-transitive") {
+    if (arg === '--include-transitive') {
       opts.includeTransitive = true;
       continue;
     }
-    if (arg === "--json") {
+    if (arg === '--json') {
       opts.json = true;
       continue;
     }
-    if (arg === "--no-scorecard") {
+    if (arg === '--no-scorecard') {
       opts.skipScorecard = true;
       continue;
     }
-    if (arg === "--no-vulns") {
+    if (arg === '--no-vulns') {
       opts.skipVulns = true;
       continue;
     }
-    if (arg === "--no-kev") {
+    if (arg === '--no-kev') {
       opts.skipKev = true;
       continue;
     }
 
-    if (arg.startsWith("--concurrency=")) {
-      const n = parseInt(arg.split("=")[1], 10);
+    if (arg.startsWith('--concurrency=')) {
+      const n = parseInt(arg.split('=')[1], 10);
       if (!isNaN(n) && n > 0) opts.concurrency = n;
       continue;
     }
-    if (arg.startsWith("--version-history=")) {
-      const n = parseInt(arg.split("=")[1], 10);
+    if (arg.startsWith('--version-history=')) {
+      const n = parseInt(arg.split('=')[1], 10);
       if (!isNaN(n) && n >= 2) opts.versionHistory = n;
       continue;
     }
-    if (arg.startsWith("--fail-on=")) {
-      const level = arg.split("=")[1].toLowerCase();
-      if (["low", "medium", "high", "critical"].includes(level)) {
+    if (arg.startsWith('--fail-on=')) {
+      const level = arg.split('=')[1].toLowerCase();
+      if (['low', 'medium', 'high', 'critical'].includes(level)) {
         opts.failOn = level;
       }
       continue;
     }
-    if (arg.startsWith("--fail-licenses=")) {
-      const raw = arg.split("=").slice(1).join("=");
-      opts.failLicenses = raw.split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
+    if (arg.startsWith('--fail-licenses=')) {
+      const raw = arg.split('=').slice(1).join('=');
+      opts.failLicenses = raw
+        .split(',')
+        .map((s) => s.trim().toUpperCase())
+        .filter(Boolean);
       continue;
     }
-    if (arg.startsWith("--lockfile=")) {
-      opts.lockfilePath = arg.split("=").slice(1).join("=");
+    if (arg.startsWith('--lockfile=')) {
+      opts.lockfilePath = arg.split('=').slice(1).join('=');
       continue;
     }
-    if (arg.startsWith("--cache-dir=")) {
-      opts.cacheDir = arg.split("=").slice(1).join("=");
+    if (arg.startsWith('--cache-dir=')) {
+      opts.cacheDir = arg.split('=').slice(1).join('=');
       continue;
     }
-    if (arg === "--no-cache") {
+    if (arg === '--no-cache') {
       opts.noCache = true;
       continue;
     }
-    if (arg.startsWith("--output=")) {
-      opts.output = arg.split("=").slice(1).join("=");
+    if (arg.startsWith('--output=')) {
+      opts.output = arg.split('=').slice(1).join('=');
       // --output implies --json (no point writing a file with no content)
       opts.json = true;
       continue;
     }
-    if (arg === "--html") {
-      opts.html = "report.html";
+    if (arg === '--html') {
+      opts.html = 'report.html';
       continue;
     }
-    if (arg.startsWith("--html=")) {
-      opts.html = arg.split("=").slice(1).join("=");
+    if (arg.startsWith('--html=')) {
+      opts.html = arg.split('=').slice(1).join('=');
       continue;
     }
-    if (!arg.startsWith("--")) {
+    if (!arg.startsWith('--')) {
       opts.packageJsonPath = arg;
     }
   }
@@ -321,7 +331,7 @@ function parseArgs(argv) {
 const USE_COLOR = process.stderr.isTTY === true && !process.env.NO_COLOR;
 
 function esc(code) {
-  return USE_COLOR ? `\x1b[${code}m` : "";
+  return USE_COLOR ? `\x1b[${code}m` : '';
 }
 
 const C = {
@@ -333,32 +343,33 @@ const C = {
   green: esc(32),
   cyan: esc(36),
   // bold/bright variants for high-severity signals
-  bred: esc("1;31"),
-  bgreen: esc("1;32"),
-  byellow: esc("1;33"),
+  bred: esc('1;31'),
+  bgreen: esc('1;32'),
+  byellow: esc('1;33'),
 };
 
 /** Visible string length — strips ANSI codes before measuring. */
 function visLen(str) {
-  return str.replace(/\x1b\[[0-9;]*m/g, "").length;
+  return str.replace(/\x1b\[[0-9;]*m/g, '').length;
 }
 
 /** Right-pad `str` to `width` visible characters. */
 function rpad(str, width) {
   const pad = width - visLen(str);
-  return pad > 0 ? str + " ".repeat(pad) : str;
+  return pad > 0 ? str + ' '.repeat(pad) : str;
 }
 
 /** Truncate to `max` chars, adding ellipsis if cut. */
 function truncate(str, max) {
-  return str.length > max ? str.slice(0, max - 1) + "…" : str;
+  return str.length > max ? str.slice(0, max - 1) + '…' : str;
 }
 
 /** Render a 6-block scorecard bar with a numeric label.  e.g. "████░░ 6.8" */
 function scorecardBar(score) {
-  if (score === null || score === undefined || score < 0) return `${C.dim}─ n/a  ${C.reset}`;
+  if (score === null || score === undefined || score < 0)
+    return `${C.dim}─ n/a  ${C.reset}`;
   const filled = Math.round((score / 10) * 6);
-  const bar = "█".repeat(filled) + "░".repeat(6 - filled);
+  const bar = '█'.repeat(filled) + '░'.repeat(6 - filled);
   const color = score < 3 ? C.red : score < 5 ? C.yellow : C.green;
   return `${color}${bar}${C.reset} ${score.toFixed(1)}`;
 }
@@ -375,21 +386,19 @@ function vulnCell(vulns) {
 
 /** Fixed-width severity badge for the findings list. */
 function sevBadge(sev) {
-  switch ((sev ?? "").toUpperCase()) {
-    case "CRITICAL":
+  switch ((sev ?? '').toUpperCase()) {
+    case 'CRITICAL':
       return `${C.bred}[CRITICAL]${C.reset}`;
-    case "HIGH":
+    case 'HIGH':
       return `${C.red}[HIGH    ]${C.reset}`;
-    case "MEDIUM":
+    case 'MEDIUM':
       return `${C.yellow}[MEDIUM  ]${C.reset}`;
-    case "LOW":
+    case 'LOW':
       return `${C.dim}[LOW     ]${C.reset}`;
     default:
       return `${C.dim}[UNKNOWN ]${C.reset}`;
   }
 }
-
-
 
 // ─── Lockfile parsing (package-lock.json v1/v2/v3) ───────────────────────────
 
@@ -403,15 +412,15 @@ function parseLockfileVersions(lock) {
   const versions = new Map();
 
   // v2 / v3 format: lock.packages is a flat map of node_modules paths
-  if (lock.packages && typeof lock.packages === "object") {
+  if (lock.packages && typeof lock.packages === 'object') {
     for (const [pkgPath, pkgMeta] of Object.entries(lock.packages)) {
-      if (!pkgPath.startsWith("node_modules/")) continue;
+      if (!pkgPath.startsWith('node_modules/')) continue;
       if (!pkgMeta.version) continue;
       // Strip the leading "node_modules/" (handles nested: node_modules/a/node_modules/b)
-      const name = pkgPath.replace(/^node_modules\//, "");
+      const name = pkgPath.replace(/^node_modules\//, '');
       // Only store the top-level entry (no nesting slash after scope slash)
-      const parts = name.split("/");
-      const topName = parts[0].startsWith("@")
+      const parts = name.split('/');
+      const topName = parts[0].startsWith('@')
         ? `${parts[0]}/${parts[1]}`
         : parts[0];
       if (!versions.has(topName)) {
@@ -422,7 +431,7 @@ function parseLockfileVersions(lock) {
   }
 
   // v1 format: lock.dependencies is a nested tree
-  if (lock.dependencies && typeof lock.dependencies === "object") {
+  if (lock.dependencies && typeof lock.dependencies === 'object') {
     for (const [name, pkgMeta] of Object.entries(lock.dependencies)) {
       if (pkgMeta.version) {
         versions.set(name, pkgMeta.version);
@@ -442,7 +451,7 @@ function loadLockfileVersions(lockfilePath) {
   if (!lockfilePath || !existsSync(lockfilePath)) return new Map();
 
   try {
-    const raw = readFileSync(lockfilePath, "utf8");
+    const raw = readFileSync(lockfilePath, 'utf8');
     const lock = JSON.parse(raw);
     return parseLockfileVersions(lock);
   } catch (err) {
@@ -459,13 +468,13 @@ function loadAllLockfilePackagesFromData(lock) {
   const versions = new Map();
 
   // v2 / v3 format: lock.packages is a flat map of node_modules paths
-  if (lock.packages && typeof lock.packages === "object") {
+  if (lock.packages && typeof lock.packages === 'object') {
     for (const [pkgPath, pkgMeta] of Object.entries(lock.packages)) {
-      if (!pkgPath.startsWith("node_modules/")) continue;
+      if (!pkgPath.startsWith('node_modules/')) continue;
       if (!pkgMeta.version) continue;
-      const name = pkgPath.replace(/^node_modules\//, "");
-      const parts = name.split("/");
-      const topName = parts[0].startsWith("@")
+      const name = pkgPath.replace(/^node_modules\//, '');
+      const parts = name.split('/');
+      const topName = parts[0].startsWith('@')
         ? `${parts[0]}/${parts[1]}`
         : parts[0];
       if (!versions.has(topName)) {
@@ -481,7 +490,7 @@ function loadAllLockfilePackagesFromData(lock) {
   // v1 format: need to traverse the tree
   const seen = new Set();
   function traverse(deps) {
-    if (!deps || typeof deps !== "object") return;
+    if (!deps || typeof deps !== 'object') return;
     for (const [name, pkgMeta] of Object.entries(deps)) {
       const key = `${name}@${pkgMeta.version}`;
       if (!seen.has(key) && pkgMeta.version) {
@@ -508,7 +517,7 @@ function loadAllLockfilePackages(lockfilePath) {
   if (!lockfilePath || !existsSync(lockfilePath)) return [];
 
   try {
-    const raw = readFileSync(lockfilePath, "utf8");
+    const raw = readFileSync(lockfilePath, 'utf8');
     const lock = JSON.parse(raw);
     return loadAllLockfilePackagesFromData(lock);
   } catch (err) {
@@ -524,26 +533,26 @@ function loadAllLockfilePackages(lockfilePath) {
  * Returns null if the spec is not a usable pinned-style version (e.g. "latest", "*", file:, git:).
  */
 function stripRangeOperators(spec) {
-  if (!spec || typeof spec !== "string") return null;
+  if (!spec || typeof spec !== 'string') return null;
 
   const trimmed = spec.trim();
 
   // Non-registry specs — skip
   if (
-    trimmed === "*" ||
-    trimmed === "" ||
-    trimmed === "latest" ||
-    trimmed === "x" ||
-    trimmed.startsWith("http") ||
-    trimmed.startsWith("git") ||
-    trimmed.startsWith("file:") ||
-    trimmed.startsWith("link:") ||
-    trimmed.startsWith("workspace:") ||
-    trimmed.includes(" ") // ranges like ">=1.0.0 <2.0.0"
+    trimmed === '*' ||
+    trimmed === '' ||
+    trimmed === 'latest' ||
+    trimmed === 'x' ||
+    trimmed.startsWith('http') ||
+    trimmed.startsWith('git') ||
+    trimmed.startsWith('file:') ||
+    trimmed.startsWith('link:') ||
+    trimmed.startsWith('workspace:') ||
+    trimmed.includes(' ') // ranges like ">=1.0.0 <2.0.0"
   )
     return null;
 
-  const stripped = trimmed.replace(/^[~^>=<]+/, "").trim();
+  const stripped = trimmed.replace(/^[~^>=<]+/, '').trim();
 
   // Must start with a digit to be a version
   if (!/^\d/.test(stripped)) return null;
@@ -575,7 +584,7 @@ async function _doFetchNpmPackage(name) {
   if (cached) return cached;
 
   // npm registry requires scoped package names to be URL-encoded as %40scope%2Fname
-  const encoded = name.startsWith("@")
+  const encoded = name.startsWith('@')
     ? `@${encodeURIComponent(name.slice(1))}` // preserve leading @, encode the rest
     : encodeURIComponent(name);
 
@@ -583,7 +592,7 @@ async function _doFetchNpmPackage(name) {
 
   try {
     const res = await fetch(url, {
-      headers: { Accept: "application/json" },
+      headers: { Accept: 'application/json' },
       signal: AbortSignal.timeout(15_000),
     });
     if (res.status === 404) return null;
@@ -617,7 +626,7 @@ function resolveVersion(pkgData, versionSpec, lockfileVersion) {
 
   // dist-tags (e.g. "latest")
   const distTag =
-    pkgData["dist-tags"]?.[versionSpec] || pkgData["dist-tags"]?.latest;
+    pkgData['dist-tags']?.[versionSpec] || pkgData['dist-tags']?.latest;
   if (distTag && pkgData.versions?.[distTag]) return distTag;
 
   // Fallback: newest version key in the registry doc
@@ -649,7 +658,7 @@ function extractVersionMetadata(pkgData, version) {
   // Maintainers (prefer version-level, fall back to package-level)
   const rawMaintainers = vd.maintainers || pkgData.maintainers || [];
   const maintainers = rawMaintainers.map((m) =>
-    typeof m === "string" ? m : m.name,
+    typeof m === 'string' ? m : m.name,
   );
 
   return {
@@ -697,7 +706,7 @@ function extractVersionHistory(pkgData, limit = 10) {
   if (!pkgData?.time) return [];
 
   return Object.entries(pkgData.time)
-    .filter(([key]) => key !== "created" && key !== "modified")
+    .filter(([key]) => key !== 'created' && key !== 'modified')
     .map(([version, date]) => ({ version, date }))
     .sort((a, b) => new Date(a.date) - new Date(b.date))
     .slice(-limit);
@@ -721,13 +730,13 @@ function extractPublisherHistory(pkgData, currentPublisher) {
 
 function normalizeRepoUrl(repo) {
   if (!repo) return null;
-  const raw = typeof repo === "string" ? repo : (repo.url ?? null);
+  const raw = typeof repo === 'string' ? repo : (repo.url ?? null);
   if (!raw) return null;
   return raw
-    .replace(/^git\+/, "")
-    .replace(/^git:\/\/github\.com/, "https://github.com")
-    .replace(/^ssh:\/\/git@github\.com/, "https://github.com")
-    .replace(/\.git$/, "");
+    .replace(/^git\+/, '')
+    .replace(/^git:\/\/github\.com/, 'https://github.com')
+    .replace(/^ssh:\/\/git@github\.com/, 'https://github.com')
+    .replace(/\.git$/, '');
 }
 
 // ─── OSV.dev vulnerability client ────────────────────────────────────────────
@@ -736,7 +745,7 @@ function normalizeRepoUrl(repo) {
  * Query OSV.dev for known vulnerabilities for a specific package version.
  * @returns {{ summary: object, list: Array }}
  */
-async function fetchVulnerabilities(name, version, ecosystem = "npm") {
+async function fetchVulnerabilities(name, version, ecosystem = 'npm') {
   const cacheKey = `osv_${safeName(name)}_${safeName(version)}`;
   const cached = readFromCache(cacheKey, TTL_OSV);
   if (cached) return cached;
@@ -749,8 +758,8 @@ async function fetchVulnerabilities(name, version, ecosystem = "npm") {
 
   try {
     const res = await fetch(`${OSV_API}/query`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ version, package: { name, ecosystem } }),
       signal: AbortSignal.timeout(15_000),
     });
@@ -776,7 +785,7 @@ async function fetchVulnerabilities(name, version, ecosystem = "npm") {
       summary[severity.toLowerCase()]++;
       return {
         id: v.id,
-        summary: v.summary ?? "No summary available",
+        summary: v.summary ?? 'No summary available',
         severity,
         aliases: v.aliases ?? [],
         published: v.published ?? null,
@@ -820,13 +829,13 @@ async function fetchVulnerabilities(name, version, ecosystem = "npm") {
  *   knownRansomwareCampaignUse, notes
  */
 async function fetchKEVList() {
-  const cacheKey = "kev_catalog";
+  const cacheKey = 'kev_catalog';
   const cached = readFromCache(cacheKey, TTL_KEV);
   if (cached) return cached;
 
   try {
     const res = await fetch(KEV_URL, {
-      headers: { Accept: "application/json" },
+      headers: { Accept: 'application/json' },
       signal: AbortSignal.timeout(30_000),
     });
     if (!res.ok) {
@@ -867,7 +876,7 @@ function matchKEVs(results, kevList) {
         if (kev) {
           matches.push({
             packageName: r.name,
-            version: r.resolvedVersion ?? r.versionSpec ?? "?",
+            version: r.resolvedVersion ?? r.versionSpec ?? '?',
             vuln: v,
             kev,
           });
@@ -883,36 +892,36 @@ function matchKEVs(results, kevList) {
 function classifyCvssSeverity(vuln) {
   // Try CVSS v4 or v3 score
   for (const s of vuln.severity ?? []) {
-    if (s.type === "CVSS_V4" || s.type === "CVSS_V3") {
+    if (s.type === 'CVSS_V4' || s.type === 'CVSS_V3') {
       const score = parseCvssVector(s.score);
-      if (score >= 9.0) return "CRITICAL";
-      if (score >= 7.0) return "HIGH";
-      if (score >= 4.0) return "MEDIUM";
-      return "LOW";
+      if (score >= 9.0) return 'CRITICAL';
+      if (score >= 7.0) return 'HIGH';
+      if (score >= 4.0) return 'MEDIUM';
+      return 'LOW';
     }
   }
   // Fall back to database_specific.severity (e.g. GitHub Advisory)
   const db = vuln.database_specific?.severity;
   if (db) return db.toUpperCase();
-  return "UNKNOWN";
+  return 'UNKNOWN';
 }
 
 function parseCvssVector(cvssVector) {
-  if (typeof cvssVector === "number") return cvssVector;
-  if (typeof cvssVector !== "string") return 5.0;
+  if (typeof cvssVector === 'number') return cvssVector;
+  if (typeof cvssVector !== 'string') return 5.0;
   // Heuristic extraction from CVSS vector — no full parser needed
   // Network-accessible, no privileges, full impact → near-max
-  if (cvssVector.includes("/AV:N/") && cvssVector.includes("/PR:N/")) {
-    if (cvssVector.includes("/C:H/I:H/A:H")) return 9.8;
+  if (cvssVector.includes('/AV:N/') && cvssVector.includes('/PR:N/')) {
+    if (cvssVector.includes('/C:H/I:H/A:H')) return 9.8;
     if (
-      cvssVector.includes("/C:H/") ||
-      cvssVector.includes("/I:H/") ||
-      cvssVector.includes("/A:H/")
+      cvssVector.includes('/C:H/') ||
+      cvssVector.includes('/I:H/') ||
+      cvssVector.includes('/A:H/')
     )
       return 8.0;
     return 7.0;
   }
-  if (cvssVector.includes("/AV:N/")) return 6.5;
+  if (cvssVector.includes('/AV:N/')) return 6.5;
   return 5.0;
 }
 
@@ -931,42 +940,49 @@ function extractAffectedRanges(vuln) {
 }
 
 function normalizeLicense(license) {
-  if (!license || typeof license !== "string") return null;
+  if (!license || typeof license !== 'string') return null;
 
   const raw = license.trim().toUpperCase();
 
-  if (raw === "NOASSERTION" || raw === "NONE") return null;
+  if (raw === 'NOASSERTION' || raw === 'NONE') return null;
 
-  if (raw === "MIT") return "MIT";
-  if (raw === "ISC") return "ISC";
-  if (raw === "BSD-2-CLAUSE" || raw === "BSD-2-CLAUSE-SHORT") return "BSD-2-CLAUSE";
-  if (raw === "BSD-3-CLAUSE" || raw === "BSD-3-CLAUSE-SHORT" || raw === "BSD") return "BSD-3-CLAUSE";
-  if (raw === "Apache-2.0" || raw === "Apache-2.0-only") return "Apache-2.0";
-  if (raw === "0BSD") return "0BSD";
-  if (raw === "CC0-1.0") return "CC0-1.0";
-  if (raw === "CC-BY-4.0") return "CC-BY-4.0";
-  if (raw === "UNLICENSED") return "UNLICENSED";
+  if (raw === 'MIT') return 'MIT';
+  if (raw === 'ISC') return 'ISC';
+  if (raw === 'BSD-2-CLAUSE' || raw === 'BSD-2-CLAUSE-SHORT')
+    return 'BSD-2-CLAUSE';
+  if (raw === 'BSD-3-CLAUSE' || raw === 'BSD-3-CLAUSE-SHORT' || raw === 'BSD')
+    return 'BSD-3-CLAUSE';
+  if (raw === 'Apache-2.0' || raw === 'Apache-2.0-only') return 'Apache-2.0';
+  if (raw === '0BSD') return '0BSD';
+  if (raw === 'CC0-1.0') return 'CC0-1.0';
+  if (raw === 'CC-BY-4.0') return 'CC-BY-4.0';
+  if (raw === 'UNLICENSED') return 'UNLICENSED';
 
-  if (raw.startsWith("GPL-")) {
-    let base = raw.replace(/^GPL-/, "");
-    base = base.replace(/-OR-LATER$/, "").replace(/-ONLY$/, "");
+  if (raw.startsWith('GPL-')) {
+    let base = raw.replace(/^GPL-/, '');
+    base = base.replace(/-OR-LATER$/, '').replace(/-ONLY$/, '');
     if (/^\d+$/.test(base)) return `GPL-${base}`;
     if (/^\d+\.\d+$/.test(base)) return `GPL-${base}`;
-    return "GPL";
+    return 'GPL';
   }
-  if (raw.startsWith("LGPL-")) {
-    let base = raw.replace(/^LGPL-/, "");
-    base = base.replace(/-OR-LATER$/, "").replace(/-ONLY$/, "");
+  if (raw.startsWith('LGPL-')) {
+    let base = raw.replace(/^LGPL-/, '');
+    base = base.replace(/-OR-LATER$/, '').replace(/-ONLY$/, '');
     if (/^\d+$/.test(base)) return `LGPL-${base}`;
     if (/^\d+\.\d+$/.test(base)) return `LGPL-${base}`;
-    return "LGPL";
+    return 'LGPL';
   }
-  if (raw === "AGPL-3.0" || raw === "AGPL-3.0-ONLY" || raw === "AGPL-3.0-OR-LATER") return "AGPL-3.0";
-  if (raw.startsWith("AGPL-")) {
-    let base = raw.replace(/^AGPL-/, "");
-    base = base.replace(/-OR-LATER$/, "").replace(/-ONLY$/, "");
+  if (
+    raw === 'AGPL-3.0' ||
+    raw === 'AGPL-3.0-ONLY' ||
+    raw === 'AGPL-3.0-OR-LATER'
+  )
+    return 'AGPL-3.0';
+  if (raw.startsWith('AGPL-')) {
+    let base = raw.replace(/^AGPL-/, '');
+    base = base.replace(/-OR-LATER$/, '').replace(/-ONLY$/, '');
     if (/^\d+\.\d+$/.test(base)) return `AGPL-${base}`;
-    return "AGPL";
+    return 'AGPL';
   }
 
   return raw;
@@ -981,11 +997,11 @@ function checkRestrictedLicenseFailures(results, opts) {
     if (!lic) continue;
 
     for (const failLic of opts.failLicenses) {
-      if (lic === failLic || lic.startsWith(failLic + "-")) {
+      if (lic === failLic || lic.startsWith(failLic + '-')) {
         failed.push({
           name: r.name,
-          version: r.resolvedVersion ?? r.versionSpec ?? "?",
-          license: r.registry?.license ?? "(unknown)",
+          version: r.resolvedVersion ?? r.versionSpec ?? '?',
+          license: r.registry?.license ?? '(unknown)',
         });
         break;
       }
@@ -1000,13 +1016,13 @@ function checkRestrictedLicenseFailures(results, opts) {
  * Parse a GitHub repository URL (in any common format) into { owner, repo }.
  */
 function parseGitHubUrl(url) {
-  if (!url || typeof url !== "string") return null;
+  if (!url || typeof url !== 'string') return null;
 
   const cleaned = url
-    .replace(/^git\+/, "")
-    .replace(/^git:\/\//, "https://")
-    .replace(/^ssh:\/\/git@github\.com/, "https://github.com")
-    .replace(/\.git$/, "")
+    .replace(/^git\+/, '')
+    .replace(/^git:\/\//, 'https://')
+    .replace(/^ssh:\/\/git@github\.com/, 'https://github.com')
+    .replace(/\.git$/, '')
     .trim();
 
   const match = cleaned.match(/github\.com[/:]([^/\s]+)\/([^/?\s#]+)/);
@@ -1028,7 +1044,7 @@ function fetchScorecard(repoUrl) {
     score: null,
     checks: [],
     signals: {},
-    error: "not_github_repo",
+    error: 'not_github_repo',
   };
 
   const parsed = parseGitHubUrl(repoUrl);
@@ -1057,18 +1073,18 @@ async function _doFetchScorecard(parsed) {
     score: null,
     checks: [],
     signals: {},
-    error: "not_github_repo",
+    error: 'not_github_repo',
   };
   const url = `${SCORECARD_API}/projects/github.com/${parsed.owner}/${parsed.repo}`;
 
   try {
     const res = await fetch(url, {
-      headers: { Accept: "application/json" },
+      headers: { Accept: 'application/json' },
       signal: AbortSignal.timeout(15_000),
     });
 
     if (res.status === 404)
-      return { ...notAvailable, error: "scorecard_not_found" };
+      return { ...notAvailable, error: 'scorecard_not_found' };
     if (!res.ok) {
       logWarn(`Scorecard API ${res.status} for ${parsed.owner}/${parsed.repo}`);
       return { ...notAvailable, error: `scorecard_api_${res.status}` };
@@ -1085,16 +1101,16 @@ async function _doFetchScorecard(parsed) {
     // Build a flat signals object for easy AI consumption
     const checkMap = new Map(checks.map((c) => [c.name, c.score]));
     const signals = {
-      maintained: checkMap.get("Maintained") ?? null,
-      codeReview: checkMap.get("Code-Review") ?? null,
-      vulnerabilities: checkMap.get("Vulnerabilities") ?? null,
-      signedReleases: checkMap.get("Signed-Releases") ?? null,
-      branchProtection: checkMap.get("Branch-Protection") ?? null,
-      securityPolicy: checkMap.get("Security-Policy") ?? null,
-      dangerousWorkflow: checkMap.get("Dangerous-Workflow") ?? null,
-      binaryArtifacts: checkMap.get("Binary-Artifacts") ?? null,
-      pinned: checkMap.get("Pinned-Dependencies") ?? null,
-      ciTests: checkMap.get("CI-Tests") ?? null,
+      maintained: checkMap.get('Maintained') ?? null,
+      codeReview: checkMap.get('Code-Review') ?? null,
+      vulnerabilities: checkMap.get('Vulnerabilities') ?? null,
+      signedReleases: checkMap.get('Signed-Releases') ?? null,
+      branchProtection: checkMap.get('Branch-Protection') ?? null,
+      securityPolicy: checkMap.get('Security-Policy') ?? null,
+      dangerousWorkflow: checkMap.get('Dangerous-Workflow') ?? null,
+      binaryArtifacts: checkMap.get('Binary-Artifacts') ?? null,
+      pinned: checkMap.get('Pinned-Dependencies') ?? null,
+      ciTests: checkMap.get('CI-Tests') ?? null,
     };
 
     const result = {
@@ -1179,7 +1195,7 @@ async function inspectPackage(
   // ── Step 4: Parallel — OSV vulnerabilities + Scorecard ─────────────────────
   const [vulnerabilities, scorecard] = await Promise.all([
     resolvedVersion && !opts.skipVulns
-      ? fetchVulnerabilities(name, resolvedVersion, "npm")
+      ? fetchVulnerabilities(name, resolvedVersion, 'npm')
       : Promise.resolve({
           summary: {
             total: 0,
@@ -1190,7 +1206,7 @@ async function inspectPackage(
             unknown: 0,
           },
           list: [],
-          error: "skipped",
+          error: 'skipped',
         }),
     sourceRepo && !opts.skipScorecard
       ? fetchScorecard(sourceRepo)
@@ -1198,7 +1214,7 @@ async function inspectPackage(
           score: null,
           checks: [],
           signals: {},
-          error: sourceRepo ? "skipped" : "no_source_repo",
+          error: sourceRepo ? 'skipped' : 'no_source_repo',
         }),
   ]);
 
@@ -1212,7 +1228,7 @@ async function inspectPackage(
     scScore === null
       ? `scorecard: ${C.dim}n/a${C.reset}`
       : `scorecard: ${scScore < 3 ? C.red : scScore < 5 ? C.yellow : C.green}${scScore}${C.reset}`;
-  logOk(`${name}@${resolvedVersion ?? "?"}  —  ${vulnPart}  ${scPart}`);
+  logOk(`${name}@${resolvedVersion ?? '?'}  —  ${vulnPart}  ${scPart}`);
 
   return {
     name,
@@ -1220,7 +1236,7 @@ async function inspectPackage(
     resolvedVersion: resolvedVersion ?? null,
     lockfileVersion: lockfileVersion ?? null,
     scope,
-    ecosystem: "npm",
+    ecosystem: 'npm',
     sourceRepository: sourceRepo,
     notFound: false,
     registry: registryMeta,
@@ -1244,7 +1260,7 @@ function buildNotFoundResult(name, versionSpec, scope, lockfileVersion) {
       stripRangeOperators(versionSpec) ?? lockfileVersion ?? null,
     lockfileVersion: lockfileVersion ?? null,
     scope,
-    ecosystem: "npm",
+    ecosystem: 'npm',
     sourceRepository: null,
     notFound: true,
     registry: null,
@@ -1260,13 +1276,13 @@ function buildNotFoundResult(name, versionSpec, scope, lockfileVersion) {
         unknown: 0,
       },
       list: [],
-      error: "package_not_found",
+      error: 'package_not_found',
     },
     scorecard: {
       score: null,
       checks: [],
       signals: {},
-      error: "package_not_found",
+      error: 'package_not_found',
     },
     collectedAt: new Date().toISOString(),
   };
@@ -1290,31 +1306,31 @@ function generateHtmlReport(results, pkg, opts, kevMatches = []) {
   const htmlTemplate = loadHtmlTemplate();
 
   const pkgLabel =
-    `${pkg.name ?? "(unnamed)"}` + (pkg.version ? `@${pkg.version}` : "");
+    `${pkg.name ?? '(unnamed)'}` + (pkg.version ? `@${pkg.version}` : '');
 
   const restrictedFailures = checkRestrictedLicenseFailures(results, opts);
 
   // Classify each result into its security signals — mirrors printReport logic
   const annotated = results.map((r) => {
     const signals = [];
-    if (r.notFound) signals.push("not_found");
-    if ((r.vulnerabilities?.summary?.total ?? 0) > 0) signals.push("vulns");
-    if (r.registry?.hasInstallScripts) signals.push("scripts");
+    if (r.notFound) signals.push('not_found');
+    if ((r.vulnerabilities?.summary?.total ?? 0) > 0) signals.push('vulns');
+    if (r.registry?.hasInstallScripts) signals.push('scripts');
     if (
       r.scorecard?.score !== null &&
       r.scorecard?.score !== undefined &&
       r.scorecard.score < 5
     )
-      signals.push("low_scorecard");
+      signals.push('low_scorecard');
     if ((r.registry?.publishedHoursAgo ?? Infinity) < 48)
-      signals.push("very_recent");
-    if (!r.sourceRepository && !r.notFound) signals.push("no_repo");
+      signals.push('very_recent');
+    if (!r.sourceRepository && !r.notFound) signals.push('no_repo');
     if (opts.failLicenses?.length > 0) {
       const lic = normalizeLicense(r.registry?.license);
       if (lic) {
         for (const failLic of opts.failLicenses) {
-          if (lic === failLic || lic.startsWith(failLic + "-")) {
-            signals.push("restricted_license");
+          if (lic === failLic || lic.startsWith(failLic + '-')) {
+            signals.push('restricted_license');
             break;
           }
         }
@@ -1341,7 +1357,7 @@ function generateHtmlReport(results, pkg, opts, kevMatches = []) {
   const generatedAt = new Date().toUTCString();
 
   /** Format a date string safely, returning a fallback if the value is invalid. */
-  function safeDate(value, fallback = "—") {
+  function safeDate(value, fallback = '—') {
     if (!value) return fallback;
     const dt = new Date(value);
     return isNaN(dt.getTime()) ? fallback : dt.toISOString().slice(0, 10);
@@ -1349,11 +1365,11 @@ function generateHtmlReport(results, pkg, opts, kevMatches = []) {
 
   /** Escape a value for safe embedding in HTML. */
   function he(s) {
-    return String(s ?? "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
   }
 
   function vulnBadgeHtml(summary) {
@@ -1372,7 +1388,7 @@ function generateHtmlReport(results, pkg, opts, kevMatches = []) {
     if (score === null || score === undefined)
       return '<span class="sc-na">─ n/a</span>';
     const pct = Math.round((score / 10) * 100);
-    const cls = score < 3 ? "sc-low" : score < 5 ? "sc-med" : "sc-high";
+    const cls = score < 3 ? 'sc-low' : score < 5 ? 'sc-med' : 'sc-high';
     return (
       `<span class="sc-bar ${cls}"><span class="sc-fill" style="width:${pct}%"></span></span>` +
       ` <span class="sc-score ${cls}">${score.toFixed(1)}</span>`
@@ -1380,20 +1396,20 @@ function generateHtmlReport(results, pkg, opts, kevMatches = []) {
   }
 
   function sevBadgeHtml(sev) {
-    const cls = (sev ?? "unknown").toLowerCase();
-    return `<span class="sev-badge ${cls}">${he(sev ?? "UNKNOWN")}</span>`;
+    const cls = (sev ?? 'unknown').toLowerCase();
+    return `<span class="sev-badge ${cls}">${he(sev ?? 'UNKNOWN')}</span>`;
   }
 
   // ── Per-package table rows ─────────────────────────────────────────────────
   const tableRows = annotated
     .map(({ r, signals }) => {
-      const ver = r.resolvedVersion ?? r.versionSpec ?? "?";
+      const ver = r.resolvedVersion ?? r.versionSpec ?? '?';
       const hasFindings = signals.length > 0;
       const rowClass = r.notFound
-        ? "row-not-found"
+        ? 'row-not-found'
         : hasFindings
-          ? "row-findings"
-          : "row-clean";
+          ? 'row-findings'
+          : 'row-clean';
 
       const nameHtml = hasFindings
         ? `<a href="#pkg-${he(r.name)}" class="pkg-link">${he(r.name)}</a>`
@@ -1411,7 +1427,7 @@ function generateHtmlReport(results, pkg, opts, kevMatches = []) {
         `        <tr class="${rowClass}">\n` +
         `          <td class="td-name">${nameHtml}</td>\n` +
         `          <td class="td-ver"><code>${he(ver)}</code></td>\n` +
-        `          <td class="td-scope"><span class="scope">${he(r.scope ?? "")}</span></td>\n` +
+        `          <td class="td-scope"><span class="scope">${he(r.scope ?? '')}</span></td>\n` +
         `          <td class="td-vuln">${vulnBadgeHtml(r.vulnerabilities?.summary)}</td>\n` +
         `          <td class="td-sc">${scorecardHtml(r.scorecard?.score ?? null)}</td>\n` +
         `          <td class="td-scripts">${scriptHtml}</td>\n` +
@@ -1419,78 +1435,78 @@ function generateHtmlReport(results, pkg, opts, kevMatches = []) {
         `        </tr>`
       );
     })
-    .join("\n");
+    .join('\n');
 
   // ── Collapsible per-package finding cards ─────────────────────────────────
   const findingCards = findings
     .map(({ r, signals }) => {
-      const ver = r.resolvedVersion ?? r.versionSpec ?? "?";
+      const ver = r.resolvedVersion ?? r.versionSpec ?? '?';
 
       const chips = [];
-      if (signals.includes("vulns")) {
+      if (signals.includes('vulns')) {
         const s = r.vulnerabilities.summary;
         const cls =
           s.critical > 0
-            ? "critical"
+            ? 'critical'
             : s.high > 0
-              ? "high"
+              ? 'high'
               : s.medium > 0
-                ? "medium"
-                : "low";
+                ? 'medium'
+                : 'low';
         chips.push(
-          `<span class="chip ${cls}">${s.total} vuln${s.total !== 1 ? "s" : ""}</span>`,
+          `<span class="chip ${cls}">${s.total} vuln${s.total !== 1 ? 's' : ''}</span>`,
         );
       }
-      if (signals.includes("scripts"))
+      if (signals.includes('scripts'))
         chips.push('<span class="chip scripts">install scripts</span>');
-      if (signals.includes("low_scorecard"))
+      if (signals.includes('low_scorecard'))
         chips.push(
           `<span class="chip scorecard">Scorecard ${r.scorecard.score.toFixed(1)}/10</span>`,
         );
-      if (signals.includes("very_recent"))
+      if (signals.includes('very_recent'))
         chips.push(
           `<span class="chip recent">published ${r.registry.publishedHoursAgo}h ago</span>`,
         );
-      if (signals.includes("not_found"))
+      if (signals.includes('not_found'))
         chips.push('<span class="chip not-found">not found on registry</span>');
-      if (signals.includes("no_repo"))
+      if (signals.includes('no_repo'))
         chips.push('<span class="chip no-repo">no source repo</span>');
-      if (signals.includes("restricted_license"))
+      if (signals.includes('restricted_license'))
         chips.push(
-          `<span class="chip license">${he(r.registry?.license ?? "restricted")}</span>`,
+          `<span class="chip license">${he(r.registry?.license ?? 'restricted')}</span>`,
         );
 
-      let body = "";
+      let body = '';
 
       // ── Vulnerabilities ──────────────────────────────────────────────────
-      if (signals.includes("vulns")) {
+      if (signals.includes('vulns')) {
         const list = r.vulnerabilities.list ?? [];
         const items = list
           .map((v) => {
             const fix = v.affectedRanges?.find((rng) => rng.fixed);
             const aliases = v.aliases?.length
-              ? ` <span class="aliases">${v.aliases.map(he).join(", ")}</span>`
-              : "";
+              ? ` <span class="aliases">${v.aliases.map(he).join(', ')}</span>`
+              : '';
             const refs = (v.references ?? [])
               .map(
                 (url) =>
                   `<a href="${he(url)}" target="_blank" rel="noopener">${he(url)}</a>`,
               )
-              .join(" ");
+              .join(' ');
             return (
-              `              <li class="vuln-item ${(v.severity ?? "unknown").toLowerCase()}">\n` +
+              `              <li class="vuln-item ${(v.severity ?? 'unknown').toLowerCase()}">\n` +
               `                <div class="vuln-header">${sevBadgeHtml(v.severity)} <strong>${he(v.id)}</strong>${aliases}</div>\n` +
               `                <div class="vuln-summary">${he(v.summary)}</div>\n` +
               (fix
                 ? `                <div class="vuln-fix">Fix available: <code>${he(fix.fixed)}</code></div>\n`
-                : "") +
+                : '') +
               (refs
                 ? `                <div class="vuln-refs">${refs}</div>\n`
-                : "") +
+                : '') +
               `              </li>`
             );
           })
-          .join("\n");
+          .join('\n');
         body +=
           `\n          <div class="detail-section">\n` +
           `            <h4>Vulnerabilities (${list.length})</h4>\n` +
@@ -1499,7 +1515,7 @@ function generateHtmlReport(results, pkg, opts, kevMatches = []) {
       }
 
       // ── Install scripts ───────────────────────────────────────────────────
-      if (signals.includes("scripts")) {
+      if (signals.includes('scripts')) {
         const scripts = Object.entries(r.registry?.lifecycleScripts ?? {});
         const items = scripts
           .map(
@@ -1507,7 +1523,7 @@ function generateHtmlReport(results, pkg, opts, kevMatches = []) {
               `              <li><code class="script-key">${he(key)}</code>` +
               `<span class="script-cmd">${he(cmd)}</span></li>`,
           )
-          .join("\n");
+          .join('\n');
         body +=
           `\n          <div class="detail-section">\n` +
           `            <h4>Install Scripts (${scripts.length})</h4>\n` +
@@ -1516,24 +1532,24 @@ function generateHtmlReport(results, pkg, opts, kevMatches = []) {
       }
 
       // ── Low Scorecard checks ──────────────────────────────────────────────
-      if (signals.includes("low_scorecard")) {
+      if (signals.includes('low_scorecard')) {
         const bad = (r.scorecard.checks ?? [])
-          .filter((chk) => typeof chk.score === "number" && chk.score < 5)
+          .filter((chk) => typeof chk.score === 'number' && chk.score < 5)
           .sort((a, b) => a.score - b.score)
           .slice(0, 8);
         const items = bad
           .map((chk) => {
-            const score = chk.score === -1 ? "N/A" : `${chk.score}/10`;
+            const score = chk.score === -1 ? 'N/A' : `${chk.score}/10`;
             const reason = chk.reason
               ? ` <span class="sc-check-reason">&#x2014; ${he(chk.reason)}</span>`
-              : "";
+              : '';
             return (
               `              <li>` +
               `<span class="sc-check-name">${he(chk.name)}</span>` +
               `<span class="sc-check-score">${score}</span>${reason}</li>`
             );
           })
-          .join("\n");
+          .join('\n');
         body +=
           `\n          <div class="detail-section">\n` +
           `            <h4>Low Scorecard Checks</h4>\n` +
@@ -1554,7 +1570,7 @@ function generateHtmlReport(results, pkg, opts, kevMatches = []) {
               `<span class="vdate">${d}</span></li>`
             );
           })
-          .join("\n");
+          .join('\n');
         body +=
           `\n          <div class="detail-section">\n` +
           `            <h4>Recent Version History</h4>\n` +
@@ -1588,7 +1604,7 @@ function generateHtmlReport(results, pkg, opts, kevMatches = []) {
           body +=
             `\n          <div class="detail-section">\n` +
             `            <h4>Package Info</h4>\n` +
-            `            <table class="meta-table"><tbody>${rows.join("")}</tbody></table>\n` +
+            `            <table class="meta-table"><tbody>${rows.join('')}</tbody></table>\n` +
             `          </div>`;
         }
       }
@@ -1598,13 +1614,13 @@ function generateHtmlReport(results, pkg, opts, kevMatches = []) {
         `        <summary>\n` +
         `          <span class="pkg-name">${he(r.name)}</span>\n` +
         `          <span class="pkg-ver">${he(ver)}</span>\n` +
-        `          <span class="chips">${chips.join("")}</span>\n` +
+        `          <span class="chips">${chips.join('')}</span>\n` +
         `        </summary>\n` +
         `        <div class="finding-body">${body}\n        </div>\n` +
         `      </details>`
       );
     })
-    .join("\n");
+    .join('\n');
 
   // ── Totals banner chips ───────────────────────────────────────────────────
   const totalChips = [];
@@ -1638,11 +1654,11 @@ function generateHtmlReport(results, pkg, opts, kevMatches = []) {
     );
   if (restrictedFailures.length > 0)
     totalChips.push(
-      `<span class="total-chip license">&#x2696; ${restrictedFailures.length} restricted license${restrictedFailures.length !== 1 ? "s" : ""}</span>`,
+      `<span class="total-chip license">&#x2696; ${restrictedFailures.length} restricted license${restrictedFailures.length !== 1 ? 's' : ''}</span>`,
     );
   if (kevMatches.length > 0)
     totalChips.push(
-      `<span class="total-chip kev">&#x25B2; ${kevMatches.length} KEV match${kevMatches.length !== 1 ? "es" : ""}</span>`,
+      `<span class="total-chip kev">&#x25B2; ${kevMatches.length} KEV match${kevMatches.length !== 1 ? 'es' : ''}</span>`,
     );
 
   const findingsSection =
@@ -1653,7 +1669,7 @@ function generateHtmlReport(results, pkg, opts, kevMatches = []) {
   // ── License failure section ─────────────────────────────────────────────
   const licenseSection =
     restrictedFailures.length === 0
-      ? ""
+      ? ''
       : (() => {
           const items = restrictedFailures
             .map(({ name, version, license }) => {
@@ -1667,13 +1683,13 @@ function generateHtmlReport(results, pkg, opts, kevMatches = []) {
                 `    </li>`
               );
             })
-            .join("\n");
+            .join('\n');
           return (
             `  <section class="license-section">\n` +
             `    <div class="license-alert-banner">\n` +
             `      <span class="license-icon">&#x2696;&#xFE0F;</span>\n` +
             `      <span>RESTRICTED LICENSES &mdash; Copyleft licenses detected in dependencies</span>\n` +
-            `      <span class="license-count">${restrictedFailures.length} match${restrictedFailures.length !== 1 ? "es" : ""}</span>\n` +
+            `      <span class="license-count">${restrictedFailures.length} match${restrictedFailures.length !== 1 ? 'es' : ''}</span>\n` +
             `    </div>\n` +
             `    <ul class="license-list">\n${items}\n    </ul>\n` +
             `  </section>`
@@ -1683,17 +1699,17 @@ function generateHtmlReport(results, pkg, opts, kevMatches = []) {
   // ── KEV alert section ────────────────────────────────────────────────────
   const kevSection =
     kevMatches.length === 0
-      ? ""
+      ? ''
       : (() => {
           const items = kevMatches
             .map(({ packageName, version, vuln, kev }) => {
               const ransomware =
-                (kev.knownRansomwareCampaignUse ?? "").toLowerCase() === "known"
+                (kev.knownRansomwareCampaignUse ?? '').toLowerCase() === 'known'
                   ? `<div class="kev-ransomware">&#x26A0; Known ransomware campaign use</div>`
-                  : "";
+                  : '';
               const dueStr = kev.dueDate
                 ? ` &middot; Due: <strong>${he(kev.dueDate)}</strong>`
-                : "";
+                : '';
               return (
                 `    <li class="kev-item">\n` +
                 `      <div class="kev-item-header">\n` +
@@ -1710,20 +1726,20 @@ function generateHtmlReport(results, pkg, opts, kevMatches = []) {
                 `        <span class="kev-meta-label">Added to KEV</span>\n` +
                 `        <span class="kev-meta-value">${he(kev.dateAdded)}${dueStr}</span>\n` +
                 `        <span class="kev-meta-label">Required action</span>\n` +
-                `        <span class="kev-meta-value">${he(kev.requiredAction ?? "—")}</span>\n` +
+                `        <span class="kev-meta-value">${he(kev.requiredAction ?? '—')}</span>\n` +
                 `      </div>\n` +
                 `      ${ransomware}\n` +
                 `      <a class="kev-catalog-link" href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog" target="_blank" rel="noopener">&#x2197; CISA KEV Catalog</a>\n` +
                 `    </li>`
               );
             })
-            .join("\n");
+            .join('\n');
           return (
             `  <section class="kev-section">\n` +
             `    <div class="kev-alert-banner">\n` +
             `      <span class="kev-icon">&#x26A0;&#xFE0F;</span>\n` +
             `      <span>KNOWN EXPLOITED VULNERABILITIES &mdash; Active exploitation confirmed by CISA</span>\n` +
-            `      <span class="kev-count">${kevMatches.length} match${kevMatches.length !== 1 ? "es" : ""}</span>\n` +
+            `      <span class="kev-count">${kevMatches.length} match${kevMatches.length !== 1 ? 'es' : ''}</span>\n` +
             `    </div>\n` +
             `    <ul class="kev-list">\n${items}\n    </ul>\n` +
             `  </section>`
@@ -1737,7 +1753,7 @@ function generateHtmlReport(results, pkg, opts, kevMatches = []) {
     PKG_LABEL: he(pkgLabel),
     PKG_COUNT: results.length,
     GENERATED_AT: generatedAt,
-    TOTAL_CHIPS: totalChips.join("\n  "),
+    TOTAL_CHIPS: totalChips.join('\n  '),
     TABLE_ROWS: tableRows,
     KEV_SECTION: kevSection,
     LICENSE_SECTION: licenseSection,
@@ -1763,34 +1779,40 @@ function generateHtmlReport(results, pkg, opts, kevMatches = []) {
  *       └ Scorecard · Check: 0/10
  *   ━━━ footer totals ━━━
  */
-function printReport(results, pkg, opts, showFindings = false, kevMatches = []) {
+function printReport(
+  results,
+  pkg,
+  opts,
+  showFindings = false,
+  kevMatches = [],
+) {
   const W = Math.min(process.stderr.columns ?? 80, 90);
-  const hr = (ch = "─") => ch.repeat(W);
-  const HR = (ch = "━") => ch.repeat(W);
+  const hr = (ch = '─') => ch.repeat(W);
+  const HR = (ch = '━') => ch.repeat(W);
 
   // ── Classify each result into its security signals ────────────────────────
   const annotated = results.map((r) => {
     const signals = [];
-    if (r.notFound) signals.push("not_found");
-    if ((r.vulnerabilities?.summary?.total ?? 0) > 0) signals.push("vulns");
-    if (r.registry?.hasInstallScripts) signals.push("scripts");
+    if (r.notFound) signals.push('not_found');
+    if ((r.vulnerabilities?.summary?.total ?? 0) > 0) signals.push('vulns');
+    if (r.registry?.hasInstallScripts) signals.push('scripts');
     if (
       r.scorecard?.score !== null &&
       r.scorecard?.score !== undefined &&
       r.scorecard.score < 5
     )
-      signals.push("low_scorecard");
+      signals.push('low_scorecard');
     if ((r.registry?.publishedHoursAgo ?? Infinity) < 48)
-      signals.push("very_recent");
-    if (!r.sourceRepository && !r.notFound) signals.push("no_repo");
+      signals.push('very_recent');
+    if (!r.sourceRepository && !r.notFound) signals.push('no_repo');
     return { r, signals };
   });
   const findings = annotated.filter((a) => a.signals.length > 0);
 
   // ── Header ────────────────────────────────────────────────────────────────
   const pkgLabel =
-    `${pkg.name ?? "(unnamed)"}` + (pkg.version ? `@${pkg.version}` : "");
-  log("");
+    `${pkg.name ?? '(unnamed)'}` + (pkg.version ? `@${pkg.version}` : '');
+  log('');
   log(HR());
   log(
     `${C.bold}  SUPPLY CHAIN REPORT${C.reset}` +
@@ -1804,25 +1826,25 @@ function printReport(results, pkg, opts, showFindings = false, kevMatches = []) 
   const COL_VER =
     Math.max(
       9,
-      ...results.map((r) => (r.resolvedVersion ?? r.versionSpec ?? "?").length),
+      ...results.map((r) => (r.resolvedVersion ?? r.versionSpec ?? '?').length),
     ) + 2;
   const COL_VULN = 14;
   const COL_SC = 16;
 
-  log("");
+  log('');
   log(
     `${C.dim}  ` +
-      rpad("PACKAGE", COL_NAME) +
-      rpad("VERSION", COL_VER) +
-      rpad("VULNS", COL_VULN) +
-      rpad("SCORECARD", COL_SC) +
+      rpad('PACKAGE', COL_NAME) +
+      rpad('VERSION', COL_VER) +
+      rpad('VULNS', COL_VULN) +
+      rpad('SCORECARD', COL_SC) +
       `SCRIPTS${C.reset}`,
   );
-  log(`  ${"─".repeat(COL_NAME + COL_VER + COL_VULN + COL_SC + 10)}`);
+  log(`  ${'─'.repeat(COL_NAME + COL_VER + COL_VULN + COL_SC + 10)}`);
 
   for (const { r } of annotated) {
     const name = r.notFound ? `${C.red}${r.name}${C.reset}` : r.name;
-    const ver = r.resolvedVersion ?? r.versionSpec ?? "?";
+    const ver = r.resolvedVersion ?? r.versionSpec ?? '?';
     const vuln = vulnCell(r.vulnerabilities);
     const sc = scorecardBar(r.scorecard?.score ?? null);
     const scr = r.registry?.hasInstallScripts
@@ -1840,19 +1862,19 @@ function printReport(results, pkg, opts, showFindings = false, kevMatches = []) 
 
   // ── Findings detail section ───────────────────────────────────────────────
   if (findings.length === 0) {
-    log("");
+    log('');
     log(
       `${C.bgreen}  ✓ All ${results.length} package(s) passed — ` +
         `no security issues detected.${C.reset}`,
     );
   } else if (!showFindings) {
-    log("");
+    log('');
     log(
       `${C.dim}  ${findings.length} package(s) have signals — ` +
         `run with --findings for details.${C.reset}`,
     );
   } else {
-    log("");
+    log('');
     log(hr());
     log(
       `${C.bold}  FINDINGS${C.reset}` +
@@ -1861,47 +1883,47 @@ function printReport(results, pkg, opts, showFindings = false, kevMatches = []) 
     log(hr());
 
     for (const { r, signals } of findings) {
-      const ver = r.resolvedVersion ?? r.versionSpec ?? "?";
+      const ver = r.resolvedVersion ?? r.versionSpec ?? '?';
 
       // Headline chips (brief coloured labels)
       const chips = [];
-      if (signals.includes("vulns")) {
+      if (signals.includes('vulns')) {
         const s = r.vulnerabilities.summary;
         chips.push(
           s.critical > 0
-            ? `${C.bred}${s.total} critical vuln${s.total !== 1 ? "s" : ""}${C.reset}`
+            ? `${C.bred}${s.total} critical vuln${s.total !== 1 ? 's' : ''}${C.reset}`
             : s.high > 0
-              ? `${C.red}${s.total} high vuln${s.total !== 1 ? "s" : ""}${C.reset}`
+              ? `${C.red}${s.total} high vuln${s.total !== 1 ? 's' : ''}${C.reset}`
               : s.medium > 0
-                ? `${C.yellow}${s.total} medium vuln${s.total !== 1 ? "s" : ""}${C.reset}`
-                : `${C.dim}${s.total} low vuln${s.total !== 1 ? "s" : ""}${C.reset}`,
+                ? `${C.yellow}${s.total} medium vuln${s.total !== 1 ? 's' : ''}${C.reset}`
+                : `${C.dim}${s.total} low vuln${s.total !== 1 ? 's' : ''}${C.reset}`,
         );
       }
-      if (signals.includes("scripts"))
+      if (signals.includes('scripts'))
         chips.push(`${C.yellow}install scripts${C.reset}`);
-      if (signals.includes("low_scorecard"))
+      if (signals.includes('low_scorecard'))
         chips.push(
           `${C.yellow}Scorecard ${r.scorecard.score.toFixed(1)}/10${C.reset}`,
         );
-      if (signals.includes("very_recent"))
+      if (signals.includes('very_recent'))
         chips.push(
           `${C.byellow}published ${r.registry.publishedHoursAgo}h ago${C.reset}`,
         );
-      if (signals.includes("not_found"))
+      if (signals.includes('not_found'))
         chips.push(`${C.red}not found on registry${C.reset}`);
-      if (signals.includes("no_repo"))
+      if (signals.includes('no_repo'))
         chips.push(`${C.dim}no source repository${C.reset}`);
 
-      log("");
-      log(`  ${C.bold}● ${r.name}@${ver}${C.reset}  ${chips.join("  ·  ")}`);
+      log('');
+      log(`  ${C.bold}● ${r.name}@${ver}${C.reset}  ${chips.join('  ·  ')}`);
 
       // Vulnerability list
-      if (signals.includes("vulns")) {
+      if (signals.includes('vulns')) {
         const list = r.vulnerabilities.list ?? [];
         list.forEach((v, i) => {
           const last = i === list.length - 1;
-          const tree = last ? "└" : "├";
-          const cont = last ? " " : "│";
+          const tree = last ? '└' : '├';
+          const cont = last ? ' ' : '│';
           const fix = v.affectedRanges?.find((rng) => rng.fixed);
           log(
             `    ${tree} ${sevBadge(v.severity)}  ${C.bold}${v.id}${C.reset}`,
@@ -1913,12 +1935,12 @@ function printReport(results, pkg, opts, showFindings = false, kevMatches = []) 
       }
 
       // Install script list
-      if (signals.includes("scripts")) {
+      if (signals.includes('scripts')) {
         const scripts = Object.entries(r.registry?.lifecycleScripts ?? {});
         scripts.forEach(([key, cmd], i) => {
           const last = i === scripts.length - 1;
           log(
-            `    ${last ? "└" : "├"} ` +
+            `    ${last ? '└' : '├'} ` +
               `${C.yellow}${rpad(key, 14)}${C.reset}` +
               `"${truncate(cmd, 55)}"`,
           );
@@ -1926,23 +1948,23 @@ function printReport(results, pkg, opts, showFindings = false, kevMatches = []) 
       }
 
       // Low-scoring Scorecard checks
-      if (signals.includes("low_scorecard")) {
+      if (signals.includes('low_scorecard')) {
         const bad = (r.scorecard.checks ?? [])
-          .filter((chk) => typeof chk.score === "number" && chk.score < 5)
+          .filter((chk) => typeof chk.score === 'number' && chk.score < 5)
           .sort((a, b) => a.score - b.score)
           .slice(0, 5);
         bad.forEach((chk, i) => {
           const last = i === bad.length - 1;
-          const score = chk.score === -1 ? "N/A" : `${chk.score}/10`;
+          const score = chk.score === -1 ? 'N/A' : `${chk.score}/10`;
           log(
-            `    ${last ? "└" : "├"} ` +
+            `    ${last ? '└' : '├'} ` +
               `${C.dim}Scorecard · ${chk.name}: ${score}${C.reset}`,
           );
         });
       }
 
       // Very-recent-publish warning
-      if (signals.includes("very_recent") && !signals.includes("vulns")) {
+      if (signals.includes('very_recent') && !signals.includes('vulns')) {
         log(
           `    └ ${C.yellow}Only ${r.registry.publishedHoursAgo}h old — ` +
             `consider waiting before adopting${C.reset}`,
@@ -1953,12 +1975,12 @@ function printReport(results, pkg, opts, showFindings = false, kevMatches = []) 
 
   // ── CISA KEV alert section ─────────────────────────────────────────────────
   if (kevMatches.length > 0) {
-    log("");
+    log('');
     const kevHr = `${C.bred}${hr()}${C.reset}`;
     log(kevHr);
     log(
       `${C.bred}  ▲ KNOWN EXPLOITED VULNERABILITIES (CISA KEV)${C.reset}` +
-        `  ·  ${C.bred}${kevMatches.length} match${kevMatches.length !== 1 ? "es" : ""}${C.reset} with actively exploited CVEs`,
+        `  ·  ${C.bred}${kevMatches.length} match${kevMatches.length !== 1 ? 'es' : ''}${C.reset} with actively exploited CVEs`,
     );
     log(kevHr);
 
@@ -1966,24 +1988,24 @@ function printReport(results, pkg, opts, showFindings = false, kevMatches = []) 
     // We pad each label to 17 chars then add 2 spaces of gutter.
     const KEV_LAB = 17 + 2; // 19 visible chars total
     const label = (txt) =>
-      `    ${C.yellow}${txt}${C.reset}${" ".repeat(KEV_LAB - txt.length)}`;
+      `    ${C.yellow}${txt}${C.reset}${' '.repeat(KEV_LAB - txt.length)}`;
 
     for (const { packageName, version, vuln, kev } of kevMatches) {
-      log("");
+      log('');
       log(
         `  ${C.bred}● ${packageName}@${version}${C.reset}` +
           `  ${sevBadge(vuln.severity)}  ${C.bold}${vuln.id}${C.reset}`,
       );
       log(`    ${C.dim}${truncate(vuln.summary, W - 6)}${C.reset}`);
-      log(`${label("Vendor / Product:")}${kev.vendorProject} — ${kev.product}`);
+      log(`${label('Vendor / Product:')}${kev.vendorProject} — ${kev.product}`);
       log(
-        `${label("Added to KEV:")}${kev.dateAdded}` +
-          (kev.dueDate ? `  ·  Due: ${kev.dueDate}` : ""),
+        `${label('Added to KEV:')}${kev.dateAdded}` +
+          (kev.dueDate ? `  ·  Due: ${kev.dueDate}` : ''),
       );
       log(
-        `${label("Required action:")}${truncate(kev.requiredAction ?? "—", W - KEV_LAB - 4)}`,
+        `${label('Required action:')}${truncate(kev.requiredAction ?? '—', W - KEV_LAB - 4)}`,
       );
-      if ((kev.knownRansomwareCampaignUse ?? "").toLowerCase() === "known") {
+      if ((kev.knownRansomwareCampaignUse ?? '').toLowerCase() === 'known') {
         log(`    ${C.bred}⚠  Known ransomware campaign use${C.reset}`);
       }
       log(
@@ -1991,7 +2013,7 @@ function printReport(results, pkg, opts, showFindings = false, kevMatches = []) 
       );
     }
 
-    log("");
+    log('');
     log(kevHr);
   }
 
@@ -2028,12 +2050,12 @@ function printReport(results, pkg, opts, showFindings = false, kevMatches = []) 
     );
   if (kevMatches.length > 0)
     footerChips.push(
-      `${C.bred}▲ ${kevMatches.length} KEV match${kevMatches.length !== 1 ? "es" : ""}${C.reset}`,
+      `${C.bred}▲ ${kevMatches.length} KEV match${kevMatches.length !== 1 ? 'es' : ''}${C.reset}`,
     );
 
-  log("");
+  log('');
   log(HR());
-  log(`  ${footerChips.join("  ·  ")}`);
+  log(`  ${footerChips.join('  ·  ')}`);
   log(HR());
 }
 
@@ -2047,11 +2069,96 @@ function isUrl(str) {
 }
 
 /**
+ * Check if a string looks like an npm package name.
+ * Handles both scoped (@scope/name) and unscoped (lodash-es) names.
+ * Returns false for file paths (contains / not starting with @, has extension, etc.)
+ */
+function isNpmPackageName(str) {
+  if (!str || typeof str !== 'string') return false;
+
+  // Strip version specifier to get the base package name
+  // lodash-es@4.17.21 → lodash-es, @nx/angular@20.8.3 → @nx/angular
+  let baseName = str;
+  if (str.startsWith('@')) {
+    // Scoped: @scope/name@version → last @ splits name from version
+    const lastAt = str.lastIndexOf('@');
+    if (lastAt > 0) baseName = str.slice(0, lastAt); // @scope/name
+  } else {
+    // Unscoped: name@version → first @ splits name from version
+    const firstAt = str.indexOf('@');
+    if (firstAt > 0) baseName = str.slice(0, firstAt); // name
+  }
+
+  // File paths: has a directory separator that's not part of a scope
+  if (baseName.includes('/') && !baseName.startsWith('@')) return false;
+
+  // File paths: has a file extension like .json, .js, .ts, etc.
+  if (/\.(json|js|ts|mjs|cjs|jsx|tsx|yaml|yml|toml|lock)$/i.test(baseName))
+    return false;
+
+  // File paths: starts with ./ or ../ or absolute path
+  if (baseName.startsWith('.') || baseName.startsWith('/')) return false;
+
+  // npm package names: must match [@[scope/]name][@version]
+  // Scoped: @scope/name — name part allows a-z, 0-9, ., -, _
+  // Unscoped: name — allows a-z, 0-9, ., -, _
+  const npmNameRegex = /^(?:@[^@\s]+\/)?[^@\s]+$/;
+  if (!npmNameRegex.test(baseName)) return false;
+
+  // Additional: npm package names must not be empty
+  const nameOnly = baseName.replace(/^@[^/]+\//, '');
+  if (!nameOnly || nameOnly.length === 0) return false;
+
+  return true;
+}
+
+/**
+ * Parse an npm package spec string into { name, versionSpec }.
+ * Supports:
+ *   lodash-es          → { name: "lodash-es", versionSpec: "*" }
+ *   lodash-es@4.17.21  → { name: "lodash-es", versionSpec: "4.17.21" }
+ *   @nx/jest           → { name: "@nx/jest", versionSpec: "*" }
+ *   @nx/jest@1.0.0     → { name: "@nx/jest", versionSpec: "1.0.0" }
+ */
+function parsePackageSpec(spec) {
+  if (!spec) return null;
+
+  if (spec.startsWith('@')) {
+    // Scoped: @scope/name or @scope/name@version
+    const withoutAt = spec.slice(1);
+    const slashIdx = withoutAt.indexOf('/');
+    if (slashIdx === -1) return null; // Malformed scoped name
+
+    const scope = withoutAt.slice(0, slashIdx);
+    const rest = withoutAt.slice(slashIdx + 1);
+
+    const lastAt = rest.lastIndexOf('@');
+    if (lastAt > 0) {
+      return {
+        name: `@${scope}/${rest.slice(0, lastAt)}`,
+        versionSpec: rest.slice(lastAt + 1),
+      };
+    }
+    return { name: `@${scope}/${rest}`, versionSpec: '*' };
+  }
+
+  // Unscoped: name or name@version
+  const lastAt = spec.lastIndexOf('@');
+  if (lastAt > 0) {
+    return {
+      name: spec.slice(0, lastAt),
+      versionSpec: spec.slice(lastAt + 1),
+    };
+  }
+  return { name: spec, versionSpec: '*' };
+}
+
+/**
  * Convert a package.json URL to its corresponding package-lock.json URL
  * E.g., https://raw.githubusercontent.com/.../package.json -> .../package-lock.json
  */
 function getLockfileUrl(packageJsonUrl) {
-  return packageJsonUrl.replace(/package\.json$/, "package-lock.json");
+  return packageJsonUrl.replace(/package\.json$/, 'package-lock.json');
 }
 
 /**
@@ -2061,7 +2168,7 @@ async function fetchLockfileFromUrl(url) {
   try {
     logOk(`Fetching lockfile from ${url}...\n`);
     const res = await fetch(url, {
-      headers: { Accept: "application/json" },
+      headers: { Accept: 'application/json' },
       signal: AbortSignal.timeout(30000),
     });
     if (!res.ok) {
@@ -2086,39 +2193,243 @@ async function main() {
   if (!opts.packageJsonPath) {
     process.stderr.write(
       [
-        "Usage: npx supply-chain-inspector <path/to/package.json|url> [options]",
-        "",
-        "Options:",
-        "  --include-dev          Include devDependencies",
-        "  --include-peer         Include peerDependencies",
-        "  --include-optional     Include optionalDependencies",
-        "  --include-transitive   Include all transitive deps from package-lock.json",
-        "                         (requires a lockfile; deduped by name@version)",
-        "  --findings             Show per-package findings detail after the table",
-        "                         (default: table only; hint shown when issues exist)",
-        "  --concurrency=<N>      Max parallel fetches (default: 5)",
-        "  --version-history=<N>  Versions to keep per package (default: 10, min: 2)",
-        "                           2  = downgrade / major-jump detection only",
-        "                           5  = + rapid publish bursts + dormancy detection",
-        "                           10 = + cadence baseline (recommended)",
-        "                           20+= broader history, larger output",
-        "  --lockfile=<path|url>  Path or URL to package-lock.json",
-        "  --json                 Print the full JSON result to stdout",
-        "  --output=<path>        Write JSON to a file (implies --json)",
-        "  --html[=<path>]        Write a standalone HTML report to a file",
-        "                         (defaults to report.html when no path given)",
-        "  --no-scorecard         Skip OpenSSF Scorecard lookups",
-        "  --no-vulns             Skip OSV.dev vulnerability lookups",
-        "  --no-kev               Skip CISA KEV cross-reference (implies no KEV section)",
-        "  --cache-dir=<path>     File-cache directory (default: .cache/ next to this script)",
-        "  --no-cache             Disable the file cache entirely (always fetch live data)",
-        "",
-      ].join("\n"),
+        'Usage: npx supply-chain-inspector <path/to/package.json|url|npm-package> [options]',
+        '',
+        'Input modes:',
+        '  package.json path   Scan all dependencies in a local package.json',
+        '  URL                 Scan a remote package.json (GitHub, raw content, etc.)',
+        '  npm package name    Inspect a single package directly (e.g. lodash-es, @nx/jest)',
+        '',
+        'Options:',
+        '  --include-dev          Include devDependencies',
+        '  --include-peer         Include peerDependencies',
+        '  --include-optional     Include optionalDependencies',
+        '  --include-transitive   Include all transitive deps from package-lock.json',
+        '                         (requires a lockfile; deduped by name@version)',
+        '  --findings             Show per-package findings detail after the table',
+        '                         (default: table only; hint shown when issues exist)',
+        '  --concurrency=<N>      Max parallel fetches (default: 5)',
+        '  --version-history=<N>  Versions to keep per package (default: 10, min: 2)',
+        '                           2  = downgrade / major-jump detection only',
+        '                           5  = + rapid publish bursts + dormancy detection',
+        '                           10 = + cadence baseline (recommended)',
+        '                           20+= broader history, larger output',
+        '  --lockfile=<path|url>  Path or URL to package-lock.json',
+        '  --json                 Print the full JSON result to stdout',
+        '  --output=<path>        Write JSON to a file (implies --json)',
+        '  --html[=<path>]        Write a standalone HTML report to a file',
+        '                         (defaults to report.html when no path given)',
+        '  --no-scorecard         Skip OpenSSF Scorecard lookups',
+        '  --no-vulns             Skip OSV.dev vulnerability lookups',
+        '  --no-kev               Skip CISA KEV cross-reference (implies no KEV section)',
+        '  --cache-dir=<path>     File-cache directory (default: .cache/ next to this script)',
+        '  --no-cache             Disable the file cache entirely (always fetch live data)',
+        '',
+      ].join('\n'),
     );
     process.exit(1);
   }
 
   const isUrlInput = isUrl(opts.packageJsonPath);
+  const isNpmInput =
+    !isUrlInput &&
+    isNpmPackageName(opts.packageJsonPath) &&
+    !existsSync(resolve(opts.packageJsonPath));
+
+  // ── NPM package name mode ──────────────────────────────────────────────────
+  if (isNpmInput) {
+    const parsed = parsePackageSpec(opts.packageJsonPath);
+    if (!parsed) {
+      process.stderr.write(
+        `Error: Could not parse package spec: ${opts.packageJsonPath}\n`,
+      );
+      process.exit(1);
+    }
+
+    // File cache initialisation
+    const scriptDir = getScriptDir();
+    const resolvedCacheDir = opts.cacheDir
+      ? resolve(opts.cacheDir)
+      : join(scriptDir, '.cache');
+    initCache(resolvedCacheDir, opts.noCache);
+
+    const cacheDir = getCacheDir();
+    if (cacheDir) {
+      log(`${C.dim}Cache:    ${cacheDir}${C.reset}`);
+    } else if (opts.noCache) {
+      log(`${C.dim}Cache:    disabled (--no-cache)${C.reset}`);
+    }
+
+    log(`\nSupply Chain Inspector`);
+    log(`Package: ${parsed.name}@${parsed.versionSpec}`);
+    log(`Mode:    npm package (direct inspection)`);
+    log('');
+
+    const entry = {
+      name: parsed.name,
+      versionSpec: parsed.versionSpec,
+      scope: 'direct',
+    };
+
+    log(`Inspecting 1 package — concurrency: ${opts.concurrency}`);
+    if (opts.skipVulns) log('  [OSV.dev lookups skipped]');
+    if (opts.skipScorecard) log('  [Scorecard lookups skipped]');
+    log('');
+
+    const results = await runWithConcurrency(
+      [() => inspectPackage(entry, null, opts)],
+      opts.concurrency,
+    );
+
+    // CISA KEV cross-reference
+    let kevMatches = [];
+    if (!opts.skipVulns && !opts.skipKev) {
+      log(`\n${C.dim}Fetching CISA KEV catalog...${C.reset}`);
+      const kevList = await fetchKEVList();
+      if (kevList.length > 0) {
+        kevMatches = matchKEVs(results, kevList);
+        if (kevMatches.length > 0) {
+          logWarn(
+            `${kevMatches.length} KEV match${kevMatches.length !== 1 ? 'es' : ''} found — ` +
+              `actively exploited CVE${kevMatches.length !== 1 ? 's' : ''} in this package!`,
+          );
+        } else {
+          logOk(`KEV check complete — no actively exploited CVEs found.`);
+        }
+      }
+    }
+
+    // Summary
+    const pkg = {
+      name: parsed.name,
+      version: results[0]?.resolvedVersion ?? null,
+    };
+    printReport(results, pkg, opts, opts.showFindings, kevMatches);
+
+    // HTML report
+    if (opts.html) {
+      const htmlPath = resolve(opts.html);
+      try {
+        writeFileSync(
+          htmlPath,
+          generateHtmlReport(results, pkg, opts, kevMatches),
+          'utf8',
+        );
+        log(`${C.dim}  HTML report written to: ${opts.html}${C.reset}`);
+      } catch (err) {
+        logErr(`Failed to write HTML report: ${err.message}`);
+      }
+    }
+
+    // Cache stats
+    const uniqueNpm = npmCache.size;
+    const uniqueScorecard = scorecardCache.size;
+    const anyStats =
+      cacheStats.npmHits > 0 ||
+      cacheStats.scorecardHits > 0 ||
+      fileCacheStats.hits > 0 ||
+      fileCacheStats.writes > 0;
+    if (anyStats) {
+      const parts = [];
+      if (fileCacheStats.hits > 0)
+        parts.push(
+          `${fileCacheStats.hits} file-cache hit${fileCacheStats.hits !== 1 ? 's' : ''}`,
+        );
+      if (fileCacheStats.writes > 0)
+        parts.push(`${fileCacheStats.writes} written`);
+      if (cacheStats.npmHits > 0 || cacheStats.scorecardHits > 0)
+        parts.push(
+          `${cacheStats.npmHits + cacheStats.scorecardHits} in-flight deduped`,
+        );
+      log(`${C.dim}  cache: ${parts.join('  ·  ')}${C.reset}`);
+      log('');
+    }
+
+    // JSON output
+    if (opts.json) {
+      const json = JSON.stringify(results, null, 2);
+      if (opts.output) {
+        writeFileSync(resolve(opts.output), json, 'utf8');
+        log(`${C.dim}  JSON written to: ${opts.output}${C.reset}`);
+      } else {
+        process.stdout.write(json + '\n');
+      }
+    } else {
+      log(
+        `${C.dim}  Tip: run with --json to print full data, or --output=<file> to save it.${C.reset}`,
+      );
+      log('');
+    }
+
+    // Exit code
+    const severityLevels = ['low', 'medium', 'high', 'critical'];
+    const failThreshold = severityLevels.indexOf(opts.failOn);
+    let shouldFail = false;
+
+    const restrictedFailures = checkRestrictedLicenseFailures(results, opts);
+    if (restrictedFailures.length > 0) {
+      shouldFail = true;
+      log('');
+      const boxWidth = 79;
+      const topLine = '╔' + '═'.repeat(boxWidth - 2) + '╗';
+      const bottomLine = '╚' + '═'.repeat(boxWidth - 2) + '╝';
+      const message = `LICENSE FAILURE: Restricted licenses found`;
+      const padding = ' '.repeat(boxWidth - 2 - message.length - 2);
+      const contentLine = `║  ${message}${padding}║`;
+      log(`${C.bred}${topLine}${C.reset}`);
+      log(`${C.bred}${contentLine}${C.reset}`);
+      log(`${C.bred}${bottomLine}${C.reset}`);
+      log('');
+      for (const pkg of restrictedFailures) {
+        logErr(
+          `  ${C.red}▪${C.reset} ${C.bold}${pkg.name}${C.reset}${C.dim}@${pkg.version}${C.reset}: ${C.yellow}${pkg.license}${C.reset}`,
+        );
+      }
+      log('');
+    }
+
+    for (const result of results) {
+      if (result.vulnerabilities?.summary) {
+        const summary = result.vulnerabilities.summary;
+        for (let i = failThreshold; i < severityLevels.length; i++) {
+          const level = severityLevels[i];
+          if (summary[level] > 0) {
+            shouldFail = true;
+            log('');
+            const boxWidth = 79;
+            const topLine = '╔' + '═'.repeat(boxWidth - 2) + '╗';
+            const bottomLine = '╚' + '═'.repeat(boxWidth - 2) + '╝';
+            const message = `SECURITY FAILURE: Vulnerabilities at or above '${opts.failOn}' threshold`;
+            const padding = ' '.repeat(boxWidth - 2 - message.length - 2);
+            const contentLine = `║  ${message}${padding}║`;
+            log(`${C.bred}${topLine}${C.reset}`);
+            log(`${C.bred}${contentLine}${C.reset}`);
+            log(`${C.bred}${bottomLine}${C.reset}`);
+            log('');
+            const colorMap = {
+              critical: C.bred,
+              high: C.red,
+              medium: C.yellow,
+              low: C.dim,
+            };
+            logErr(
+              `  ${C.red}▪${C.reset} ${C.bold}${result.name}${C.reset}${C.dim}:${C.reset} ${colorMap[level]}${summary[level]} ${level.toUpperCase()}${C.reset}`,
+            );
+            log('');
+            break;
+          }
+        }
+      }
+    }
+
+    if (kevMatches.length > 0) {
+      shouldFail = true;
+    }
+
+    if (shouldFail) process.exit(1);
+    return; // Exit early — skip the package.json flow below
+  }
+
   let pkgPath;
   let pkg;
 
@@ -2127,7 +2438,7 @@ async function main() {
     try {
       logOk(`Fetching package.json from ${opts.packageJsonPath}...\n`);
       const res = await fetch(opts.packageJsonPath, {
-        headers: { Accept: "application/json" },
+        headers: { Accept: 'application/json' },
         signal: AbortSignal.timeout(30000),
       });
       if (!res.ok) {
@@ -2154,7 +2465,7 @@ async function main() {
     }
 
     try {
-      pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+      pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
     } catch (err) {
       process.stderr.write(
         `Error: Failed to parse ${basename(pkgPath)}: ${err.message}\n`,
@@ -2167,9 +2478,9 @@ async function main() {
   const scriptDir = getScriptDir();
   const resolvedCacheDir = opts.cacheDir
     ? resolve(opts.cacheDir)
-    : join(scriptDir, ".cache");
+    : join(scriptDir, '.cache');
   initCache(resolvedCacheDir, opts.noCache);
-  
+
   // Log cache directory info
   const cacheDir = getCacheDir();
   if (cacheDir) {
@@ -2179,7 +2490,7 @@ async function main() {
   }
 
   log(`\nSupply Chain Inspector`);
-  log(`Package: ${pkg.name ?? "(unnamed)"} ${pkg.version ?? ""}`);
+  log(`Package: ${pkg.name ?? '(unnamed)'} ${pkg.version ?? ''}`);
   log(`Source:  ${pkgPath}`);
 
   // ── Load lockfile for exact version resolution ──────────────────────────────
@@ -2209,7 +2520,7 @@ async function main() {
     // Local file handling (existing behavior)
     lockfilePath = opts.lockfilePath
       ? resolve(opts.lockfilePath)
-      : resolve(dirname(pkgPath), "package-lock.json");
+      : resolve(dirname(pkgPath), 'package-lock.json');
   }
 
   const lockfileVersions = lockfileData
@@ -2227,18 +2538,18 @@ async function main() {
   const entries = [];
 
   const addDeps = (depsObj, scope) => {
-    if (!depsObj || typeof depsObj !== "object") return;
+    if (!depsObj || typeof depsObj !== 'object') return;
     for (const [name, versionSpec] of Object.entries(depsObj)) {
       entries.push({ name, versionSpec, scope });
     }
   };
 
-  addDeps(pkg.dependencies, "dependencies");
-  addDeps(pkg.devDependencies, opts.includeDev ? "devDependencies" : null);
-  addDeps(pkg.peerDependencies, opts.includePeer ? "peerDependencies" : null);
+  addDeps(pkg.dependencies, 'dependencies');
+  addDeps(pkg.devDependencies, opts.includeDev ? 'devDependencies' : null);
+  addDeps(pkg.peerDependencies, opts.includePeer ? 'peerDependencies' : null);
   addDeps(
     pkg.optionalDependencies,
-    opts.includeOptional ? "optionalDependencies" : null,
+    opts.includeOptional ? 'optionalDependencies' : null,
   );
 
   // ── Transitive dependencies from lockfile ─────────────────────────────────
@@ -2255,11 +2566,11 @@ async function main() {
 
     if (allPkgs.length === 0) {
       logWarn(
-        "--include-transitive requires a lockfile" +
+        '--include-transitive requires a lockfile' +
           (lockfileData === null && isUrlInput
-            ? " (lockfile not found at remote location)"
+            ? ' (lockfile not found at remote location)'
             : !lockfilePath
-              ? ""
+              ? ''
               : `; none found at ${lockfilePath}`),
       );
     } else {
@@ -2270,7 +2581,7 @@ async function main() {
         // double-analyze them (the direct entry already carries the right scope).
         if (directNames.has(name)) continue;
         // versionSpec is the exact resolved version — no range operators needed.
-        entries.push({ name, versionSpec: version, scope: "transitive" });
+        entries.push({ name, versionSpec: version, scope: 'transitive' });
         added++;
       }
       if (added > 0) {
@@ -2285,14 +2596,14 @@ async function main() {
   const toInspect = entries.filter((e) => e.scope !== null);
 
   if (toInspect.length === 0) {
-    log("\nNo dependencies found to inspect.");
+    log('\nNo dependencies found to inspect.');
     if (opts.json) {
       const json = JSON.stringify([], null, 2);
       if (opts.output) {
-        writeFileSync(opts.output, json, "utf8");
+        writeFileSync(opts.output, json, 'utf8');
         log(`Output written to: ${opts.output}`);
       } else {
-        process.stdout.write(json + "\n");
+        process.stdout.write(json + '\n');
       }
     }
     process.exit(0);
@@ -2301,9 +2612,9 @@ async function main() {
   log(
     `\nInspecting ${toInspect.length} package(s) — concurrency: ${opts.concurrency}`,
   );
-  if (opts.skipVulns) log("  [OSV.dev lookups skipped]");
-  if (opts.skipScorecard) log("  [Scorecard lookups skipped]");
-  log("");
+  if (opts.skipVulns) log('  [OSV.dev lookups skipped]');
+  if (opts.skipScorecard) log('  [Scorecard lookups skipped]');
+  log('');
 
   // ── Run all inspections with concurrency limit ──────────────────────────────
   const tasks = toInspect.map(
@@ -2322,8 +2633,8 @@ async function main() {
       kevMatches = matchKEVs(results, kevList);
       if (kevMatches.length > 0) {
         logWarn(
-          `${kevMatches.length} KEV match${kevMatches.length !== 1 ? "es" : ""} found — ` +
-            `actively exploited CVE${kevMatches.length !== 1 ? "s" : ""} in your dependencies!`,
+          `${kevMatches.length} KEV match${kevMatches.length !== 1 ? 'es' : ''} found — ` +
+            `actively exploited CVE${kevMatches.length !== 1 ? 's' : ''} in your dependencies!`,
         );
       } else {
         logOk(`KEV check complete — no actively exploited CVEs found.`);
@@ -2342,7 +2653,7 @@ async function main() {
       writeFileSync(
         htmlPath,
         generateHtmlReport(results, pkg, opts, kevMatches),
-        "utf8",
+        'utf8',
       );
       log(`${C.dim}  HTML report written to: ${opts.html}${C.reset}`);
     } catch (err) {
@@ -2362,7 +2673,7 @@ async function main() {
     const parts = [];
     if (fileCacheStats.hits > 0)
       parts.push(
-        `${fileCacheStats.hits} file-cache hit${fileCacheStats.hits !== 1 ? "s" : ""}`,
+        `${fileCacheStats.hits} file-cache hit${fileCacheStats.hits !== 1 ? 's' : ''}`,
       );
     if (fileCacheStats.writes > 0)
       parts.push(`${fileCacheStats.writes} written`);
@@ -2370,28 +2681,28 @@ async function main() {
       parts.push(
         `${cacheStats.npmHits + cacheStats.scorecardHits} in-flight deduped`,
       );
-    log(`${C.dim}  cache: ${parts.join("  ·  ")}${C.reset}`);
-    log("");
+    log(`${C.dim}  cache: ${parts.join('  ·  ')}${C.reset}`);
+    log('');
   }
 
   // ── JSON output (opt-in via --json or --output) ───────────────────────────
   if (opts.json) {
     const json = JSON.stringify(results, null, 2);
     if (opts.output) {
-      writeFileSync(resolve(opts.output), json, "utf8");
+      writeFileSync(resolve(opts.output), json, 'utf8');
       log(`${C.dim}  JSON written to: ${opts.output}${C.reset}`);
     } else {
-      process.stdout.write(json + "\n");
+      process.stdout.write(json + '\n');
     }
   } else {
     log(
       `${C.dim}  Tip: run with --json to print full data, or --output=<file> to save it.${C.reset}`,
     );
-log("");
+    log('');
   }
 
   // ── Exit code based on --fail-on threshold and --fail-licenses ────────
-  const severityLevels = ["low", "medium", "high", "critical"];
+  const severityLevels = ['low', 'medium', 'high', 'critical'];
   const failThreshold = severityLevels.indexOf(opts.failOn);
 
   let shouldFail = false;
@@ -2401,18 +2712,18 @@ log("");
   const restrictedFailures = checkRestrictedLicenseFailures(results, opts);
   if (restrictedFailures.length > 0) {
     shouldFail = true;
-    log("");
+    log('');
     const boxWidth = 79;
-    const topLine = "╔" + "═".repeat(boxWidth - 2) + "╗";
-    const bottomLine = "╚" + "═".repeat(boxWidth - 2) + "╝";
+    const topLine = '╔' + '═'.repeat(boxWidth - 2) + '╗';
+    const bottomLine = '╚' + '═'.repeat(boxWidth - 2) + '╝';
     const message = `LICENSE FAILURE: Restricted licenses found in dependencies`;
-    const padding = " ".repeat(boxWidth - 2 - message.length - 2);
+    const padding = ' '.repeat(boxWidth - 2 - message.length - 2);
     const contentLine = `║  ${message}${padding}║`;
 
     log(`${C.bred}${topLine}${C.reset}`);
     log(`${C.bred}${contentLine}${C.reset}`);
     log(`${C.bred}${bottomLine}${C.reset}`);
-    log("");
+    log('');
     for (const pkg of restrictedFailures.slice(0, 5)) {
       logErr(
         `  ${C.red}▪${C.reset} ${C.bold}${pkg.name}${C.reset}${C.dim}@${pkg.version}${C.reset}: ${C.yellow}${pkg.license}${C.reset}`,
@@ -2421,7 +2732,7 @@ log("");
     if (restrictedFailures.length > 5) {
       log(`  ${C.dim}... and ${restrictedFailures.length - 5} more${C.reset}`);
     }
-    log("");
+    log('');
   }
 
   // Check vulnerability failures
@@ -2444,18 +2755,18 @@ log("");
   }
 
   if (failedPackages.length > 0) {
-    log("");
+    log('');
     const boxWidth = 79;
-    const topLine = "╔" + "═".repeat(boxWidth - 2) + "╗";
-    const bottomLine = "╚" + "═".repeat(boxWidth - 2) + "╝";
+    const topLine = '╔' + '═'.repeat(boxWidth - 2) + '╗';
+    const bottomLine = '╚' + '═'.repeat(boxWidth - 2) + '╝';
     const message = `SECURITY FAILURE: Vulnerabilities found at or above '${opts.failOn}' threshold`;
-    const padding = " ".repeat(boxWidth - 2 - message.length - 2);
+    const padding = ' '.repeat(boxWidth - 2 - message.length - 2);
     const contentLine = `║  ${message}${padding}║`;
 
     log(`${C.bred}${topLine}${C.reset}`);
     log(`${C.bred}${contentLine}${C.reset}`);
     log(`${C.bred}${bottomLine}${C.reset}`);
-    log("");
+    log('');
     for (const pkg of failedPackages.slice(0, 5)) {
       const colorMap = {
         critical: C.bred,
@@ -2471,7 +2782,7 @@ log("");
     if (failedPackages.length > 5) {
       log(`  ${C.dim}... and ${failedPackages.length - 5} more${C.reset}`);
     }
-    log("");
+    log('');
   }
 
   // ── KEV hard-fail (always triggers when matches exist, unless --no-kev) ───
@@ -2479,19 +2790,19 @@ log("");
   // This is independent of --fail-on: even a MEDIUM KEV is more dangerous
   // than a theoretical CRITICAL that nobody is currently exploiting.
   if (kevMatches.length > 0) {
-    log("");
+    log('');
     const boxWidth = 79;
-    const topLine = "╔" + "═".repeat(boxWidth - 2) + "╗";
-    const bottomLine = "╚" + "═".repeat(boxWidth - 2) + "╝";
+    const topLine = '╔' + '═'.repeat(boxWidth - 2) + '╗';
+    const bottomLine = '╚' + '═'.repeat(boxWidth - 2) + '╝';
     const n = kevMatches.length;
-    const message = `SECURITY FAILURE: ${n} actively exploited CVE${n !== 1 ? "s" : ""} (CISA KEV) in your dependencies`;
-    const padding = " ".repeat(Math.max(0, boxWidth - 2 - message.length - 2));
+    const message = `SECURITY FAILURE: ${n} actively exploited CVE${n !== 1 ? 's' : ''} (CISA KEV) in your dependencies`;
+    const padding = ' '.repeat(Math.max(0, boxWidth - 2 - message.length - 2));
     const contentLine = `║  ${message}${padding}║`;
 
     log(`${C.bred}${topLine}${C.reset}`);
     log(`${C.bred}${contentLine}${C.reset}`);
     log(`${C.bred}${bottomLine}${C.reset}`);
-    log("");
+    log('');
     for (const { packageName, version, vuln, kev } of kevMatches) {
       logErr(
         `  ${C.red}▪${C.reset} ${C.bold}${packageName}@${version}${C.reset}` +
@@ -2499,7 +2810,7 @@ log("");
           `  ${C.dim}(added to KEV: ${kev.dateAdded})${C.reset}`,
       );
     }
-    log("");
+    log('');
     shouldFail = true;
   }
 
@@ -2508,7 +2819,19 @@ log("");
   }
 }
 
-main().catch((err) => {
-  process.stderr.write(`\nFatal error: ${err.message}\n${err.stack}\n`);
-  process.exit(1);
-});
+// ─── Exports (for testing and programmatic use) ──────────────────────────────
+
+export { isNpmPackageName, parsePackageSpec };
+
+// ─── CLI entry point ─────────────────────────────────────────────────────────
+
+const __isMain =
+  process.argv[1] &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (__isMain) {
+  main().catch((err) => {
+    process.stderr.write(`\nFatal error: ${err.message}\n${err.stack}\n`);
+    process.exit(1);
+  });
+}
