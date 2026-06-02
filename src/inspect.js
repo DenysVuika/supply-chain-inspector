@@ -155,9 +155,9 @@
  *   OpenSSF Scorecard https://api.scorecard.dev       project health (17 checks)
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, realpathSync } from 'node:fs';
 import { resolve, dirname, basename, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { log, logOk, logErr, logWarn } from './logger.js';
 import { isNpmPackageName, parsePackageSpec } from './pkg.js';
 import {
@@ -179,10 +179,9 @@ import {
 import {
   loadCssTemplate,
   loadHtmlTemplate,
-  loadGraphCssTemplate,
-  loadGraphHtmlTemplate,
   renderTemplate,
 } from './templates.js';
+import { generateGraphReport } from './graph.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -482,26 +481,26 @@ function loadLockfileVersions(lockfilePath) {
  * Reads from file path only (not used for remote lockfiles yet).
  */
 function loadAllLockfilePackagesFromData(lock) {
-  const versions = new Map();
+  const entries = new Map();
 
   // v2 / v3 format: lock.packages is a flat map of node_modules paths
   if (lock.packages && typeof lock.packages === 'object') {
     for (const [pkgPath, pkgMeta] of Object.entries(lock.packages)) {
       if (!pkgPath.startsWith('node_modules/')) continue;
       if (!pkgMeta.version) continue;
-      const name = pkgPath.replace(/^node_modules\//, '');
-      const parts = name.split('/');
-      const topName = parts[0].startsWith('@')
-        ? `${parts[0]}/${parts[1]}`
-        : parts[0];
-      if (!versions.has(topName)) {
-        versions.set(topName, pkgMeta.version);
+
+      // Use the actual package at the end of the node_modules chain, e.g.
+      // node_modules/a/node_modules/@scope/b -> @scope/b
+      const segments = pkgPath.split('node_modules/').filter(Boolean);
+      const name = segments[segments.length - 1];
+      if (!name) continue;
+
+      const key = `${name}@${pkgMeta.version}`;
+      if (!entries.has(key)) {
+        entries.set(key, { name, version: pkgMeta.version });
       }
     }
-    return Array.from(versions.entries()).map(([name, version]) => ({
-      name,
-      version,
-    }));
+    return Array.from(entries.values());
   }
 
   // v1 format: need to traverse the tree
@@ -512,7 +511,7 @@ function loadAllLockfilePackagesFromData(lock) {
       const key = `${name}@${pkgMeta.version}`;
       if (!seen.has(key) && pkgMeta.version) {
         seen.add(key);
-        versions.set(name, pkgMeta.version);
+        entries.set(key, { name, version: pkgMeta.version });
       }
       if (pkgMeta.dependencies) {
         traverse(pkgMeta.dependencies);
@@ -521,10 +520,7 @@ function loadAllLockfilePackagesFromData(lock) {
   }
   traverse(lock.dependencies);
 
-  return Array.from(versions.entries()).map(([name, version]) => ({
-    name,
-    version,
-  }));
+  return Array.from(entries.values());
 }
 
 /**
@@ -541,6 +537,16 @@ function loadAllLockfilePackages(lockfilePath) {
     logWarn(`Could not parse lockfile: ${err.message}`);
     return [];
   }
+}
+
+/**
+ * Choose lockfile version override for an inspection entry.
+ * Transitive entries already carry an exact lockfile version in versionSpec,
+ * so they must not be remapped by top-level name-based lockfile resolution.
+ */
+export function selectLockfileVersionForEntry(entry, lockfileVersions) {
+  if (entry?.scope === 'transitive') return null;
+  return lockfileVersions.get(entry.name) ?? null;
 }
 
 /**
@@ -1899,298 +1905,7 @@ function generateHtmlReport(results, pkg, opts, kevMatches = []) {
   return renderTemplate(htmlTemplate, replacements);
 }
 
-/**
- * Generate a dependency graph report using vis-network.
- * Graph model:
- *   package.json -> scope buckets (dependencies/devDependencies/...) -> package nodes
- * When --include-transitive is enabled, transitive nodes are added under
- * the transitiveDependencies bucket.
- */
-function generateGraphReport(
-  results,
-  pkg,
-  opts,
-  kevMatches = [],
-  lockfileData = null,
-  lockfilePath = null,
-  graphContext = null,
-) {
-  const cssTemplate = loadGraphCssTemplate();
-  const htmlTemplate = loadGraphHtmlTemplate();
-
-  const pkgLabel =
-    `${pkg.name ?? '(unnamed)'}` + (pkg.version ? `@${pkg.version}` : '');
-
-  function he(s) {
-    return String(s ?? '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
-  }
-
-  const scopes = [
-    { key: 'dependencies', label: 'dependencies' },
-    { key: 'devDependencies', label: 'devDependencies' },
-    { key: 'peerDependencies', label: 'peerDependencies' },
-    { key: 'optionalDependencies', label: 'optionalDependencies' },
-  ];
-  if (opts.includeTransitive) {
-    scopes.push({ key: 'transitive', label: 'transitiveDependencies' });
-  }
-
-  let nextId = 1;
-  const nodes = [];
-  const edges = [];
-  const nodeIds = new Map();
-  const edgeKeys = new Set();
-  const scopePackageCounts = new Map(scopes.map((scope) => [scope.key, 0]));
-  const resultNodeByName = new Map();
-  const resultNodeByNameVersion = new Map();
-
-  const kevSet = new Set(
-    kevMatches.map((m) => `${m.packageName}@${m.version ?? '?'}`),
-  );
-
-  const isProblematic = (r) => {
-    const version = r.resolvedVersion ?? r.versionSpec ?? '?';
-    if (r.notFound) return true;
-    if ((r.vulnerabilities?.summary?.total ?? 0) > 0) return true;
-    if (r.registry?.hasInstallScripts) return true;
-    if (
-      r.scorecard?.score !== null &&
-      r.scorecard?.score !== undefined &&
-      r.scorecard.score < 5
-    ) {
-      return true;
-    }
-    if (kevSet.has(`${r.name}@${version}`)) return true;
-    return false;
-  };
-
-  const graphRiskTone = (r) => {
-    const version = r.resolvedVersion ?? r.versionSpec ?? '?';
-    const hasVulns = (r.vulnerabilities?.summary?.total ?? 0) > 0;
-    const hasKev = kevSet.has(`${r.name}@${version}`);
-    if (hasVulns || hasKev) return 'red';
-    if (isProblematic(r)) return 'orange';
-    return 'none';
-  };
-
-  const addNode = (key, node) => {
-    if (nodeIds.has(key)) return nodeIds.get(key);
-    const id = nextId++;
-    nodes.push({ id, ...node });
-    nodeIds.set(key, id);
-    return id;
-  };
-
-  const addEdge = (from, to, extra = {}) => {
-    const label = extra.label ?? '';
-    const kind = extra.kind ?? 'contains';
-    const key = `${from}->${to}|${label}|${extra.className ?? ''}|${kind}`;
-    if (edgeKeys.has(key)) return;
-    edgeKeys.add(key);
-    const edge = { from, to };
-    if (label) edge.label = label;
-    edge.kind = kind;
-    if (extra.dashes !== undefined) edge.dashes = extra.dashes;
-    if (extra.color) edge.color = extra.color;
-    if (extra.width !== undefined) edge.width = extra.width;
-    if (extra.smooth) edge.smooth = extra.smooth;
-    edges.push(edge);
-  };
-
-  const rootLabel = graphContext?.rootLabel ?? 'package.json';
-  const rootTitle =
-    graphContext?.rootTitle ?? `${pkgLabel}\nRoot package manifest`;
-
-  const rootId = addNode('root', {
-    label: rootLabel,
-    group: 'root',
-    title: rootTitle,
-  });
-
-  const scopeNodeIds = new Map();
-  const scopeDefs = new Map(scopes.map((scope) => [scope.key, scope]));
-
-  const ensureScopeNode = (scopeKey) => {
-    if (scopeNodeIds.has(scopeKey)) return scopeNodeIds.get(scopeKey);
-    const scope = scopeDefs.get(scopeKey) ?? scopeDefs.get('dependencies');
-    if (!scope) return null;
-    const id = addNode(`scope:${scope.key}`, {
-      label: scope.label,
-      group: 'section',
-      title: `Dependency scope: ${scope.label}`,
-    });
-    scopeNodeIds.set(scope.key, id);
-    addEdge(rootId, id);
-    return id;
-  };
-
-  const normalizeScope = (scope) => {
-    if (!scope || scope === 'direct') return 'dependencies';
-    if (scopeDefs.has(scope)) return scope;
-    return 'dependencies';
-  };
-
-  const vulnerabilitiesCount = (r) => r.vulnerabilities?.summary?.total ?? 0;
-  const findingsCount = results.filter((r) => isProblematic(r)).length;
-
-  for (const r of results) {
-    const scope = normalizeScope(r.scope);
-    const parentScopeId =
-      ensureScopeNode(scope) ?? ensureScopeNode('dependencies');
-    const version = r.resolvedVersion ?? r.versionSpec ?? '?';
-    const pkgKey = `pkg:${r.name}@${version}`;
-    const vulnTotal = vulnerabilitiesCount(r);
-    const score = r.scorecard?.score;
-    const label = `${r.name}\n${version}`;
-
-    const titleParts = [
-      `${r.name}@${version}`,
-      `Scope: ${r.scope ?? 'dependencies'}`,
-      `Vulnerabilities: ${vulnTotal}`,
-      `Scorecard: ${
-        score === null || score === undefined ? 'n/a' : score.toFixed(1)
-      }`,
-      `Install scripts: ${r.registry?.hasInstallScripts ? 'yes' : 'no'}`,
-    ];
-    if (r.notFound)
-      titleParts.push('Package metadata not found in npm registry');
-
-    const problematic = isProblematic(r);
-    const tone = graphRiskTone(r);
-    const nodeId = addNode(pkgKey, {
-      label,
-      group: scope,
-      problematic,
-      riskTone: tone,
-      ...(tone === 'red'
-        ? {
-            color: {
-              background: '#4a1616',
-              border: '#ff6b6b',
-              highlight: { background: '#662020', border: '#ff9a9a' },
-              hover: { background: '#5a1b1b', border: '#ff7f7f' },
-            },
-            borderWidth: 2.4,
-            font: { color: '#fff2f2' },
-          }
-        : tone === 'orange'
-          ? {
-              color: {
-                background: '#4a3110',
-                border: '#ffb347',
-                highlight: { background: '#5b3c13', border: '#ffd08a' },
-                hover: { background: '#6a4718', border: '#ffbf66' },
-              },
-              borderWidth: 2,
-              font: { color: '#fff4de' },
-            }
-          : {}),
-      title: titleParts.join('\n'),
-    });
-
-    resultNodeByName.set(r.name, nodeId);
-    resultNodeByNameVersion.set(`${r.name}@${version}`, nodeId);
-    scopePackageCounts.set(scope, (scopePackageCounts.get(scope) ?? 0) + 1);
-    addEdge(parentScopeId, nodeId, { kind: 'contains' });
-  }
-
-  // Additional dependency nodes for npm-package mode where we only inspect one
-  // package result, but still want its declared dependency graph visible.
-  const additionalDeps = graphContext?.scopeDependencies;
-  if (additionalDeps && typeof additionalDeps === 'object') {
-    for (const scope of scopes) {
-      const deps = additionalDeps[scope.key] ?? [];
-      if (deps.length === 0) continue;
-      const parentScopeId = ensureScopeNode(scope.key);
-      if (!parentScopeId) continue;
-      for (const dep of deps) {
-        const depName = dep?.name;
-        if (!depName) continue;
-        if (resultNodeByName.has(depName)) continue;
-
-        const depVersionSpec = dep.versionSpec ?? '*';
-        const depKey = `ext:${scope.key}:${depName}@${depVersionSpec}`;
-        const depId = addNode(depKey, {
-          label: `${depName}\n${depVersionSpec}`,
-          group: scope.key,
-          riskTone: 'none',
-          title: `${depName}@${depVersionSpec}\nScope: ${scope.key}\nSource: npm package metadata`,
-        });
-        addEdge(parentScopeId, depId, { kind: 'contains' });
-        scopePackageCounts.set(
-          scope.key,
-          (scopePackageCounts.get(scope.key) ?? 0) + 1,
-        );
-      }
-    }
-  }
-
-  // Add lockfile package-to-package edges for deeper transitive visibility.
-  // Enabled only when --include-transitive is requested.
-  if (opts.includeTransitive) {
-    const lock = lockfileData ?? loadLockfileData(lockfilePath);
-    if (lock) {
-      const depEdges = extractLockfileDependencyEdges(lock);
-      for (const dep of depEdges) {
-        const fromId =
-          resultNodeByNameVersion.get(
-            `${dep.fromName}@${dep.fromVersion ?? '?'}`,
-          ) ?? resultNodeByName.get(dep.fromName);
-        const toId =
-          resultNodeByNameVersion.get(
-            `${dep.toName}@${dep.toVersion ?? '?'}`,
-          ) ?? resultNodeByName.get(dep.toName);
-        if (!fromId || !toId || fromId === toId) continue;
-        addEdge(fromId, toId, {
-          kind: 'depends',
-          dashes: true,
-          color: { color: '#7e8794', highlight: '#b9c2cf' },
-          width: 1,
-          smooth: { type: 'cubicBezier', roundness: 0.2 },
-        });
-      }
-    }
-  }
-
-  const scopeCounts = scopes
-    .map((s) => {
-      const count = scopePackageCounts.get(s.key) ?? 0;
-      return `<span class="summary-chip">${he(s.label)}: ${count}</span>`;
-    })
-    .join('\n');
-
-  const summaryChips =
-    scopeCounts +
-    '\n' +
-    `<span class="summary-chip ${findingsCount > 0 ? 'warn' : 'ok'}">findings: ${findingsCount}</span>` +
-    '\n' +
-    `<span class="summary-chip">nodes: ${nodes.length}</span>` +
-    '\n' +
-    `<span class="summary-chip">edges: ${edges.length}</span>`;
-
-  const payload = JSON.stringify({
-    nodes,
-    edges,
-    graphMeta: {
-      rootId,
-      defaultView: 'findings',
-      focusMode: 'findings-and-ancestors',
-    },
-  }).replace(/<\//g, '<\\/');
-
-  return renderTemplate(htmlTemplate, {
-    TITLE: he(pkgLabel),
-    CSS: cssTemplate,
-    PKG_LABEL: he(pkgLabel),
-    GENERATED_AT: new Date().toUTCString(),
-    SUMMARY_CHIPS: summaryChips,
-    GRAPH_PAYLOAD: payload,
-  });
-}
+// Graph report generation moved to src/graph.js.
 
 // ─── Terminal report ──────────────────────────────────────────────────────────
 
@@ -3019,7 +2734,11 @@ async function main() {
   // ── Run all inspections with concurrency limit ──────────────────────────────
   const tasks = toInspect.map(
     (entry) => () =>
-      inspectPackage(entry, lockfileVersions.get(entry.name) ?? null, opts),
+      inspectPackage(
+        entry,
+        selectLockfileVersionForEntry(entry, lockfileVersions),
+        opts,
+      ),
   );
 
   const results = await runWithConcurrency(tasks, opts.concurrency);
@@ -3243,7 +2962,21 @@ async function main() {
 
 // ─── CLI entry point ─────────────────────────────────────────────────────────
 
-main().catch((err) => {
-  process.stderr.write(`\nFatal error: ${err.message}\n${err.stack}\n`);
-  process.exit(1);
-});
+const isMainModule = (() => {
+  if (!process.argv[1]) return false;
+
+  try {
+    const argvPath = realpathSync(resolve(process.argv[1]));
+    const modulePath = realpathSync(fileURLToPath(import.meta.url));
+    return argvPath === modulePath;
+  } catch {
+    return import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
+  }
+})();
+
+if (isMainModule) {
+  main().catch((err) => {
+    process.stderr.write(`\nFatal error: ${err.message}\n${err.stack}\n`);
+    process.exit(1);
+  });
+}

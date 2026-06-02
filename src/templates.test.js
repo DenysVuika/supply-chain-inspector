@@ -4,6 +4,7 @@ import {
   loadHtmlTemplate,
   loadGraphCssTemplate,
   loadGraphHtmlTemplate,
+  loadGraphJsTemplate,
   clearTemplateCache,
   renderTemplate,
   getTemplatesDir,
@@ -167,12 +168,45 @@ describe("loadGraphHtmlTemplate()", () => {
     expect(html).toContain("{{CSS}}");
     expect(html).toContain("{{PKG_LABEL}}");
     expect(html).toContain("{{SUMMARY_CHIPS}}");
-    expect(html).toContain("{{GRAPH_PAYLOAD}}");
+    expect(html).toContain("__GRAPH_SCRIPT__");
+    expect(html).toContain('id="btn-refit"');
+    expect(html).toContain("Reflow Once");
+    expect(html).not.toContain('id="btn-reset"');
+    expect(html).not.toContain("Reset View");
+    expect(html).not.toContain('id="btn-collapse"');
   });
 
   it("returns the same value on subsequent calls (caching)", () => {
     const first = loadGraphHtmlTemplate();
     const second = loadGraphHtmlTemplate();
+    expect(second).toBe(first);
+  });
+});
+
+describe("loadGraphJsTemplate()", () => {
+  beforeEach(() => {
+    clearTemplateCache();
+  });
+
+  it("returns a non-empty string", () => {
+    const js = loadGraphJsTemplate();
+    expect(typeof js).toBe("string");
+    expect(js.length).toBeGreaterThan(0);
+  });
+
+  it("contains expected graph JS placeholders", () => {
+    const js = loadGraphJsTemplate();
+    expect(js).toContain("{{GRAPH_PAYLOAD}}");
+    expect(js).toContain("const network = new vis.Network");
+    expect(js).toContain('document.getElementById("btn-refit")');
+    expect(js).toContain("btnRefit.addEventListener");
+    expect(js).not.toContain("btnReset.addEventListener");
+    expect(js).not.toContain("btnCollapse.addEventListener");
+  });
+
+  it("returns the same value on subsequent calls (caching)", () => {
+    const first = loadGraphJsTemplate();
+    const second = loadGraphJsTemplate();
     expect(second).toBe(first);
   });
 });

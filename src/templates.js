@@ -17,11 +17,13 @@ const CSS_PATH = resolve(HTML_DIR, "report.css");
 const HTML_PATH = resolve(HTML_DIR, "report.html");
 const GRAPH_CSS_PATH = resolve(GRAPH_DIR, "report.css");
 const GRAPH_HTML_PATH = resolve(GRAPH_DIR, "report.html");
+const GRAPH_JS_PATH = resolve(GRAPH_DIR, "report.js");
 
 let cssCache = null;
 let htmlCache = null;
 let graphCssCache = null;
 let graphHtmlCache = null;
+let graphJsCache = null;
 
 /**
  * Load and cache the CSS template.
@@ -84,6 +86,22 @@ export function loadGraphHtmlTemplate() {
 }
 
 /**
+ * Load and cache the graph JavaScript template.
+ * @returns {string} The graph JavaScript template content
+ */
+export function loadGraphJsTemplate() {
+  if (graphJsCache) return graphJsCache;
+  try {
+    graphJsCache = readFileSync(GRAPH_JS_PATH, "utf8");
+    return graphJsCache;
+  } catch (err) {
+    throw new Error(
+      `Failed to load graph JS template from ${GRAPH_JS_PATH}: ${err.message}`,
+    );
+  }
+}
+
+/**
  * Clear template caches (useful for testing or reload).
  */
 export function clearTemplateCache() {
@@ -91,6 +109,7 @@ export function clearTemplateCache() {
   htmlCache = null;
   graphCssCache = null;
   graphHtmlCache = null;
+  graphJsCache = null;
 }
 
 /**
