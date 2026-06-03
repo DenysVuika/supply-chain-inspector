@@ -2221,6 +2221,39 @@ function getLockfileUrl(packageJsonUrl) {
 }
 
 /**
+ * Convert a package.json URL to a sibling file URL in the same directory.
+ */
+function getSiblingUrl(packageJsonUrl, siblingName) {
+  return packageJsonUrl.replace(/package\.json$/, siblingName);
+}
+
+/**
+ * Best-effort existence check for a remote file URL.
+ */
+async function remoteFileExists(url) {
+  try {
+    const res = await fetch(url, {
+      method: 'HEAD',
+      signal: AbortSignal.timeout(15000),
+    });
+
+    // Some hosts may not allow HEAD; fall back to a lightweight GET.
+    if (res.status === 405) {
+      const getRes = await fetch(url, {
+        method: 'GET',
+        headers: { Range: 'bytes=0-0' },
+        signal: AbortSignal.timeout(15000),
+      });
+      return getRes.ok;
+    }
+
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Fetch and parse a lockfile from a URL
  */
 async function fetchLockfileFromUrl(url) {
@@ -2611,6 +2644,8 @@ async function main() {
   // ── Load lockfile for exact version resolution ──────────────────────────────
   let lockfilePath;
   let lockfileData = null;
+  let hasRemotePnpmLockfile = false;
+  let remotePnpmLockfileUrl = null;
 
   if (isUrlInput) {
     // Handle remote lockfile
@@ -2630,6 +2665,11 @@ async function main() {
       // Auto-detect lockfile from the same URL directory
       lockfilePath = getLockfileUrl(pkgPath);
       lockfileData = await fetchLockfileFromUrl(lockfilePath);
+
+      if (opts.includeTransitive && !lockfileData) {
+        remotePnpmLockfileUrl = getSiblingUrl(pkgPath, 'pnpm-lock.yaml');
+        hasRemotePnpmLockfile = await remoteFileExists(remotePnpmLockfileUrl);
+      }
     }
   } else {
     // Local file handling (existing behavior)
@@ -2683,7 +2723,9 @@ async function main() {
       logWarn(
         '--include-transitive requires a lockfile' +
           (lockfileData === null && isUrlInput
-            ? ' (lockfile not found at remote location)'
+            ? hasRemotePnpmLockfile
+              ? ` (package-lock.json not found at remote location; detected pnpm-lock.yaml at ${remotePnpmLockfileUrl}, but only package-lock.json is currently supported)`
+              : ' (lockfile not found at remote location)'
             : !lockfilePath
               ? ''
               : `; none found at ${lockfilePath}`),
@@ -2825,6 +2867,33 @@ async function main() {
     log(`${C.dim}  cache: ${parts.join('  ·  ')}${C.reset}`);
     log('');
   }
+
+  // ── Lockfile status (summary) ───────────────────────────────────────────
+  const lockfileResolvedCount = lockfileVersions.size;
+  const lockfileSource = lockfileData
+    ? 'remote'
+    : lockfilePath && existsSync(lockfilePath)
+      ? 'local'
+      : null;
+
+  if (lockfileResolvedCount > 0 && lockfileSource) {
+    const autoDetected =
+      isUrlInput && !opts.lockfilePath && lockfileSource === 'remote';
+    const sourceText = autoDetected
+      ? `${lockfileSource}, auto-detected`
+      : lockfileSource;
+    log(
+      `${C.dim}  lockfile: ${sourceText} (${lockfileResolvedCount} resolved version${lockfileResolvedCount !== 1 ? 's' : ''})${C.reset}`,
+    );
+  } else {
+    const reason = isUrlInput
+      ? hasRemotePnpmLockfile
+        ? 'package-lock missing/unreadable; pnpm-lock.yaml detected but unsupported'
+        : 'missing or unreadable remote lockfile'
+      : 'missing or unreadable lockfile';
+    log(`${C.dim}  lockfile: none (${reason}; npm registry fallback)${C.reset}`);
+  }
+  log('');
 
   // ── JSON output (opt-in via --json or --output) ───────────────────────────
   if (opts.json) {
