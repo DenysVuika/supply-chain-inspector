@@ -39,13 +39,6 @@
 
 ---
 
-## Requirements
-
-- **Node.js 18 or later** (uses native `fetch`)
-- No npm install required — the script is fully self-contained, or use `npx` to run it directly from the registry
-
----
-
 ## Quick Start
 
 ```bash
