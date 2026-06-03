@@ -33,8 +33,11 @@
   `package-lock.json`, not just direct dependencies
 - **Lockfile-aware** — auto-detects `package-lock.json` for exact pinned versions
   instead of resolving from semver ranges
-- **File cache** — API responses are cached to disk (npm: 6 h, OSV: 6 h,
-  Scorecard: 24 h, CISA KEV: 24 h) so repeated runs are fast and network-friendly
+- **File cache** — API responses are cached to disk with stale-while-revalidate
+  semantics (npm: 24 h, OSV: 12 h, Scorecard: 48 h, CISA KEV: 48 h) so repeated
+  runs are fast and network-friendly. Stale data is served instantly while a
+  background refresh updates the cache for the next invocation. TTLs are
+  configurable via `--ttl-npm`, `--ttl-osv`, `--ttl-scorecard`, `--ttl-kev`.
 - **In-flight deduplication** — concurrent workers that request the same package
   or repo share one HTTP request instead of firing duplicates
 - **Zero dependencies** — uses Node.js 18+ built-in `fetch`; nothing to install
@@ -164,15 +167,26 @@ By default only `dependencies` (production) are scanned.
 | `--cache-dir=<path>` | Directory for cached API responses (default: `.cache/` next to the script) |
 | `--no-cache` | Disable file cache; always fetch live data |
 
-Cache TTLs are fixed and not configurable. Delete cache files manually to force
-an early refresh:
+Cache uses **stale-while-revalidate**: within the soft TTL the entry is a fresh
+hit (no network). Past the soft TTL but within the hard TTL, stale data is served
+instantly and a background refresh updates the cache file for the next run.
+Past the hard TTL the entry is expired and a fresh fetch blocks as usual.
 
-| Source | TTL | Rationale |
-| --- | --- | --- |
-| npm Registry | 6 h | Refreshed when new versions are published |
-| OSV.dev | 6 h | Vulnerability data is stable within hours |
-| OpenSSF Scorecard | 24 h | Scores are recomputed weekly by OpenSSF |
-| CISA KEV | 24 h | Catalog is updated weekly; daily refresh is sufficient |
+| Source | Hard TTL | Soft TTL | Rationale |
+| --- | --- | --- | --- |
+| npm Registry | 24 h | 6 h | Metadata rarely changes within hours |
+| OSV.dev | 12 h | 2 h | Vulnerability data is stable within hours |
+| OpenSSF Scorecard | 48 h | 12 h | Scores are recomputed weekly by OpenSSF |
+| CISA KEV | 48 h | 12 h | Catalog is updated weekly |
+
+TTLs can be overridden per data source (values in hours):
+
+| Flag | Description |
+| --- | --- |
+| `--ttl-npm=<hours>` | npm registry hard TTL (default: 24). Soft TTL derived as 25% of hard. |
+| `--ttl-osv=<hours>` | OSV.dev hard TTL (default: 12) |
+| `--ttl-scorecard=<hours>` | Scorecard hard TTL (default: 48) |
+| `--ttl-kev=<hours>` | CISA KEV hard TTL (default: 48) |
 
 ### Report
 
@@ -283,6 +297,12 @@ npx supply-chain-inspector https://raw.githubusercontent.com/DenysVuika/supply-c
 
 # Force fresh data, bypassing any cached responses
 npx supply-chain-inspector package.json --no-cache
+
+# Use a shared cache directory for multiple projects
+npx supply-chain-inspector package.json --cache-dir=~/.supply-chain-cache
+
+# Extend cache TTLs for a CI environment (hours)
+npx supply-chain-inspector package.json --ttl-npm=48 --ttl-osv=24
 ```
 
 You can combine these patterns as needed (for example: `--html --output --findings`).
@@ -496,8 +516,8 @@ the same run:
 | No KEV matches and no `--fail-on` trigger | `0` |
 
 Use `--no-kev` to opt out of KEV hard-failure (e.g. in offline environments or
-when triaging KEV matches separately). The KEV catalog is cached for **24 hours**
-alongside other API responses.
+when triaging KEV matches separately). The KEV catalog is cached for **48 hours**
+(soft: 12 h) alongside other API responses.
 
 ---
 
