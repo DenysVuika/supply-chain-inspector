@@ -218,9 +218,14 @@ export function generateGraphReport(
     edges.push(edge);
   };
 
-  const rootLabel = graphContext?.rootLabel ?? 'package.json';
+  const defaultRootLabel = pkg?.name
+    ? pkg?.version
+      ? `${pkg.name}@${pkg.version}`
+      : pkg.name
+    : 'package.json';
+  const rootLabel = graphContext?.rootLabel ?? defaultRootLabel;
   const rootTitle =
-    graphContext?.rootTitle ?? `${pkgLabel}\nRoot package manifest`;
+    graphContext?.rootTitle ?? `${defaultRootLabel}\nRoot package manifest`;
 
   const rootId = addNode('root', {
     label: rootLabel,

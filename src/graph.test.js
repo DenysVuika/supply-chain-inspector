@@ -134,10 +134,56 @@ describe('generateGraphReport()', () => {
     expect(html).toContain('new vis.Network(container, data, options)');
     expect(html).not.toContain('__GRAPH_SCRIPT__');
     expect(html).not.toContain('{{GRAPH_PAYLOAD}}');
-    expect(html).toContain("Reflow Once");
+    expect(html).toContain('Reflow Once');
     expect(html).toContain('id="btn-refit"');
     expect(html).not.toContain('id="btn-reset"');
     expect(html).not.toContain('id="btn-collapse"');
+  });
+
+  it('uses package name and version for root label with sensible fallback', () => {
+    const results = [];
+
+    const htmlWithPkg = generateGraphReport(
+      results,
+      { name: 'demo', version: '1.2.3' },
+      { includeTransitive: false },
+      [],
+      null,
+      null,
+      null,
+    );
+    const payloadWithPkg = parsePayloadFromHtml(htmlWithPkg);
+    const rootWithPkg = payloadWithPkg.nodes.find((n) => n.group === 'root');
+    expect(rootWithPkg).toBeTruthy();
+    expect(rootWithPkg.label).toBe('demo@1.2.3');
+
+    const htmlFallback = generateGraphReport(
+      results,
+      { name: 'demo' },
+      { includeTransitive: false },
+      [],
+      null,
+      null,
+      null,
+    );
+    const payloadFallback = parsePayloadFromHtml(htmlFallback);
+    const rootFallback = payloadFallback.nodes.find((n) => n.group === 'root');
+    expect(rootFallback).toBeTruthy();
+    expect(rootFallback.label).toBe('demo');
+
+    const htmlNoPkg = generateGraphReport(
+      results,
+      {},
+      { includeTransitive: false },
+      [],
+      null,
+      null,
+      null,
+    );
+    const payloadNoPkg = parsePayloadFromHtml(htmlNoPkg);
+    const rootNoPkg = payloadNoPkg.nodes.find((n) => n.group === 'root');
+    expect(rootNoPkg).toBeTruthy();
+    expect(rootNoPkg.label).toBe('package.json');
   });
 
   it('adds lockfile parent path for red transitive nodes without scanned parent results', () => {
@@ -381,7 +427,11 @@ describe('generateGraphReport()', () => {
     const connected = rootConnectedNodeIds(payload);
 
     expect(connected.size).toBe(payload.nodes.length);
-    expect(payload.nodes.find((n) => n.label === 'island-parent@1.0.0')).toBeFalsy();
-    expect(payload.nodes.find((n) => n.label === 'island-child@2.0.0')).toBeFalsy();
+    expect(
+      payload.nodes.find((n) => n.label === 'island-parent@1.0.0'),
+    ).toBeFalsy();
+    expect(
+      payload.nodes.find((n) => n.label === 'island-child@2.0.0'),
+    ).toBeFalsy();
   });
 });
