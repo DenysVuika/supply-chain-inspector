@@ -47,6 +47,7 @@
  *
  *   Data collection
  *     --concurrency=<N>      Max parallel package fetches (default: 5)
+ *     --verbose              Show per-package request/progress logs
  *     --lockfile=<path|url>  Path or URL to package-lock.json for exact version resolution
  *                            (auto-detected next to package.json if not given;
  *                            for URLs, auto-detects package-lock.json in same directory)
@@ -224,6 +225,7 @@ function parseArgs(argv) {
     skipKev: false,
     cacheDir: null, // null → resolved to default in main()
     noCache: false,
+    verbose: false,
     includeTransitive: false,
     showFindings: false,
     failOn: 'critical', // 'low' | 'medium' | 'high' | 'critical'
@@ -271,6 +273,10 @@ function parseArgs(argv) {
     if (arg.startsWith('--concurrency=')) {
       const n = parseInt(arg.split('=')[1], 10);
       if (!isNaN(n) && n > 0) opts.concurrency = n;
+      continue;
+    }
+    if (arg === '--verbose' || arg === '--versbose') {
+      opts.verbose = true;
       continue;
     }
     if (arg.startsWith('--version-history=')) {
@@ -1307,7 +1313,9 @@ async function inspectPackage(
   lockfileVersion,
   opts,
 ) {
-  log(`  → ${name}  (${versionSpec})`);
+  if (opts.verbose) {
+    log(`  → ${name}  (${versionSpec})`);
+  }
 
   // ── Step 1: npm registry ────────────────────────────────────────────────────
   const pkgData = await fetchNpmPackage(name);
@@ -1370,7 +1378,9 @@ async function inspectPackage(
     scScore === null
       ? `scorecard: ${C.dim}n/a${C.reset}`
       : `scorecard: ${scScore < 3 ? C.red : scScore < 5 ? C.yellow : C.green}${scScore}${C.reset}`;
-  logOk(`${name}@${resolvedVersion ?? '?'}  —  ${vulnPart}  ${scPart}`);
+  if (opts.verbose) {
+    logOk(`${name}@${resolvedVersion ?? '?'}  —  ${vulnPart}  ${scPart}`);
+  }
 
   return {
     name,
@@ -2301,6 +2311,7 @@ async function main() {
         '  --findings             Show per-package findings detail after the table',
         '                         (default: table only; hint shown when issues exist)',
         '  --concurrency=<N>      Max parallel fetches (default: 5)',
+        '  --verbose              Show per-package fetch/progress logs',
         '  --version-history=<N>  Versions to keep per package (default: 10, min: 2)',
         '                           2  = downgrade / major-jump detection only',
         '                           5  = + rapid publish bursts + dormancy detection',
