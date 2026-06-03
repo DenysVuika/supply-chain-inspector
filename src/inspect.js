@@ -2891,7 +2891,9 @@ async function main() {
         ? 'package-lock missing/unreadable; pnpm-lock.yaml detected but unsupported'
         : 'missing or unreadable remote lockfile'
       : 'missing or unreadable lockfile';
-    log(`${C.dim}  lockfile: none (${reason}; npm registry fallback)${C.reset}`);
+    log(
+      `${C.dim}  lockfile: none (${reason}; npm registry fallback)${C.reset}`,
+    );
   }
   log('');
 
