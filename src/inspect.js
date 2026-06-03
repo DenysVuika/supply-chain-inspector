@@ -63,10 +63,11 @@
  *                            (default: .cache/ next to this script)
  *     --no-cache             Disable file cache; always fetch live data
  *
- *   Cache TTLs (not configurable; delete cache files to force refresh):
- *     npm registry  6 h   — refreshed when new package versions are published
- *     OSV.dev       6 h   — vulnerability data is fairly stable within hours
- *     Scorecard    24 h   — OpenSSF recomputes scores weekly; daily is enough
+ *   Cache TTLs (hours; stale data is served while refreshing in background):
+ *     --ttl-npm=<hours>       npm registry TTL (default: 24h, soft: 6h)
+ *     --ttl-osv=<hours>       OSV.dev TTL (default: 12h, soft: 2h)
+ *     --ttl-scorecard=<hours> Scorecard TTL (default: 48h, soft: 12h)
+ *     --ttl-kev=<hours>       CISA KEV TTL (default: 48h, soft: 12h)
  *
  *   Report
  *     --findings             Show per-package findings detail below the table.
@@ -167,6 +168,10 @@ import {
   TTL_OSV,
   TTL_SCORECARD,
   TTL_KEV,
+  SOFT_TTL_NPM,
+  SOFT_TTL_OSV,
+  SOFT_TTL_SCORECARD,
+  SOFT_TTL_KEV,
   npmCache,
   scorecardCache,
   cacheStats,
@@ -174,6 +179,7 @@ import {
   getCacheDir,
   safeName,
   readFromCache,
+  readStaleFromCache,
   writeToCache,
   fileCacheStats,
 } from './cache.js';
@@ -230,6 +236,11 @@ function parseArgs(argv) {
     showFindings: false,
     failOn: 'critical', // 'low' | 'medium' | 'high' | 'critical'
     failLicenses: null,
+    // Configurable TTLs in hours (null = use defaults from cache.js)
+    ttlNpm: null,
+    ttlOsv: null,
+    ttlScorecard: null,
+    ttlKev: null,
   };
 
   for (const arg of args) {
@@ -309,6 +320,27 @@ function parseArgs(argv) {
     }
     if (arg === '--no-cache') {
       opts.noCache = true;
+      continue;
+    }
+    // Configurable TTLs — values in hours (e.g. --ttl-npm=24)
+    if (arg.startsWith('--ttl-npm=')) {
+      const n = parseFloat(arg.split('=')[1]);
+      if (!isNaN(n) && n > 0) opts.ttlNpm = n;
+      continue;
+    }
+    if (arg.startsWith('--ttl-osv=')) {
+      const n = parseFloat(arg.split('=')[1]);
+      if (!isNaN(n) && n > 0) opts.ttlOsv = n;
+      continue;
+    }
+    if (arg.startsWith('--ttl-scorecard=')) {
+      const n = parseFloat(arg.split('=')[1]);
+      if (!isNaN(n) && n > 0) opts.ttlScorecard = n;
+      continue;
+    }
+    if (arg.startsWith('--ttl-kev=')) {
+      const n = parseFloat(arg.split('=')[1]);
+      if (!isNaN(n) && n > 0) opts.ttlKev = n;
       continue;
     }
     if (arg.startsWith('--output=')) {
@@ -712,20 +744,30 @@ function stripRangeOperators(spec) {
  * Results are deduplicated: concurrent callers for the same package name share
  * one in-flight request.
  */
-function fetchNpmPackage(name) {
+function fetchNpmPackage(name, opts) {
   if (npmCache.has(name)) {
     cacheStats.npmHits++;
     return npmCache.get(name);
   }
-  const promise = _doFetchNpmPackage(name);
+  const promise = _doFetchNpmPackage(name, opts);
   npmCache.set(name, promise);
   return promise;
 }
 
-async function _doFetchNpmPackage(name) {
+async function _doFetchNpmPackage(name, opts, skipCache = false) {
   const cacheKey = `npm_${safeName(name)}`;
-  const cached = await readFromCache(cacheKey, TTL_NPM);
-  if (cached) return cached;
+
+  if (!skipCache) {
+    const { hard, soft } = resolveTtls('npm', opts);
+    const cached = await readStaleFromCache(cacheKey, hard, soft);
+    if (cached) {
+      if (cached.stale) {
+        // Return stale data immediately, refresh in background
+        _doFetchNpmPackage(name, opts, true).catch(() => {});
+      }
+      return cached.data;
+    }
+  }
 
   // npm registry requires scoped package names to be URL-encoded as %40scope%2Fname
   const encoded = name.startsWith('@')
@@ -893,10 +935,19 @@ function normalizeRepoUrl(repo) {
  * Query OSV.dev for known vulnerabilities for a specific package version.
  * @returns {{ summary: object, list: Array }}
  */
-async function fetchVulnerabilities(name, version, ecosystem = 'npm') {
+async function fetchVulnerabilities(name, version, ecosystem = 'npm', opts, skipCache = false) {
   const cacheKey = `osv_${safeName(name)}_${safeName(version)}`;
-  const cached = await readFromCache(cacheKey, TTL_OSV);
-  if (cached) return cached;
+
+  if (!skipCache) {
+    const { hard, soft } = resolveTtls('osv', opts);
+    const cached = await readStaleFromCache(cacheKey, hard, soft);
+    if (cached) {
+      if (cached.stale) {
+        fetchVulnerabilities(name, version, ecosystem, opts, true).catch(() => {});
+      }
+      return cached.data;
+    }
+  }
 
   const empty = {
     summary: { total: 0, critical: 0, high: 0, medium: 0, low: 0, unknown: 0 },
@@ -976,10 +1027,19 @@ async function fetchVulnerabilities(name, version, ecosystem = 'npm') {
  *   dateAdded, shortDescription, requiredAction, dueDate,
  *   knownRansomwareCampaignUse, notes
  */
-async function fetchKEVList() {
+async function fetchKEVList(opts, skipCache = false) {
   const cacheKey = 'kev_catalog';
-  const cached = await readFromCache(cacheKey, TTL_KEV);
-  if (cached) return cached;
+
+  if (!skipCache) {
+    const { hard, soft } = resolveTtls('kev', opts);
+    const cached = await readStaleFromCache(cacheKey, hard, soft);
+    if (cached) {
+      if (cached.stale) {
+        fetchKEVList(opts, true).catch(() => {});
+      }
+      return cached.data;
+    }
+  }
 
   try {
     const res = await fetch(KEV_URL, {
@@ -1185,9 +1245,10 @@ function parseGitHubUrl(url) {
  * share a monorepo (e.g. every @babel/* package → babel/babel) make exactly
  * one HTTP request regardless of how many are processed concurrently.
  * @param {string} repoUrl - Repository URL from npm registry metadata
+ * @param {object} opts - CLI options
  * @returns {Promise<object>}
  */
-function fetchScorecard(repoUrl) {
+function fetchScorecard(repoUrl, opts) {
   const notAvailable = {
     score: null,
     checks: [],
@@ -1206,16 +1267,25 @@ function fetchScorecard(repoUrl) {
     return scorecardCache.get(cacheKey);
   }
 
-  const promise = _doFetchScorecard(parsed);
+  const promise = _doFetchScorecard(parsed, opts);
   scorecardCache.set(cacheKey, promise);
   return promise;
 }
 
-async function _doFetchScorecard(parsed) {
+async function _doFetchScorecard(parsed, opts, skipCache = false) {
   const cacheKey =
     `scorecard_${safeName(parsed.owner)}__${safeName(parsed.repo)}`.toLowerCase();
-  const cached = await readFromCache(cacheKey, TTL_SCORECARD);
-  if (cached) return cached;
+
+  if (!skipCache) {
+    const { hard, soft } = resolveTtls('scorecard', opts);
+    const cached = await readStaleFromCache(cacheKey, hard, soft);
+    if (cached) {
+      if (cached.stale) {
+        _doFetchScorecard(parsed, opts, true).catch(() => {});
+      }
+      return cached.data;
+    }
+  }
 
   const notAvailable = {
     score: null,
@@ -1318,7 +1388,7 @@ async function inspectPackage(
   }
 
   // ── Step 1: npm registry ────────────────────────────────────────────────────
-  const pkgData = await fetchNpmPackage(name);
+  const pkgData = await fetchNpmPackage(name, opts);
 
   if (!pkgData) {
     logWarn(`  Package not found on npm registry: ${name}`);
@@ -1345,7 +1415,7 @@ async function inspectPackage(
   // ── Step 4: Parallel — OSV vulnerabilities + Scorecard ─────────────────────
   const [vulnerabilities, scorecard] = await Promise.all([
     resolvedVersion && !opts.skipVulns
-      ? fetchVulnerabilities(name, resolvedVersion, 'npm')
+      ? fetchVulnerabilities(name, resolvedVersion, 'npm', opts)
       : Promise.resolve({
           summary: {
             total: 0,
@@ -1359,7 +1429,7 @@ async function inspectPackage(
           error: 'skipped',
         }),
     sourceRepo && !opts.skipScorecard
-      ? fetchScorecard(sourceRepo)
+      ? fetchScorecard(sourceRepo, opts)
       : Promise.resolve({
           score: null,
           checks: [],
@@ -2332,6 +2402,30 @@ function printCacheStats() {
   }
 }
 
+/**
+ * Resolve hard and soft TTLs for a data source.
+ * If the user provides --ttl-<source>=<hours>, use that as the hard TTL
+ * and derive the soft TTL as 25% of it. Otherwise use the defaults.
+ * @param {'npm'|'osv'|'scorecard'|'kev'} source
+ * @param {object} opts - CLI options
+ * @returns {{ hard: number, soft: number }} TTLs in milliseconds
+ */
+function resolveTtls(source, opts) {
+  const defaults = {
+    npm: { hard: TTL_NPM, soft: SOFT_TTL_NPM },
+    osv: { hard: TTL_OSV, soft: SOFT_TTL_OSV },
+    scorecard: { hard: TTL_SCORECARD, soft: SOFT_TTL_SCORECARD },
+    kev: { hard: TTL_KEV, soft: SOFT_TTL_KEV },
+  };
+  const d = defaults[source];
+  const userHours = opts?.[`ttl${source.charAt(0).toUpperCase() + source.slice(1)}`];
+  if (userHours != null && userHours > 0) {
+    const hard = userHours * 3600_000;
+    return { hard, soft: Math.floor(hard * 0.25) };
+  }
+  return d;
+}
+
 async function main() {
   const opts = parseArgs(process.argv);
 
@@ -2375,6 +2469,12 @@ async function main() {
         '  --no-kev               Skip CISA KEV cross-reference (implies no KEV section)',
         '  --cache-dir=<path>     File-cache directory (default: .cache/ next to this script)',
         '  --no-cache             Disable the file cache entirely (always fetch live data)',
+        '',
+        '  Cache TTLs (hours; stale data is served while refreshing in background):',
+        '    --ttl-npm=<hours>       npm registry TTL (default: 24h, soft: 6h)',
+        '    --ttl-osv=<hours>       OSV.dev TTL (default: 12h, soft: 2h)',
+        '    --ttl-scorecard=<hours> Scorecard TTL (default: 48h, soft: 12h)',
+        '    --ttl-kev=<hours>       CISA KEV TTL (default: 48h, soft: 12h)',
         '',
       ].join('\n'),
     );
@@ -2425,7 +2525,7 @@ async function main() {
     let kevMatches = [];
     if (!opts.skipVulns && !opts.skipKev) {
       log(`\n${C.dim}Fetching CISA KEV catalog...${C.reset}`);
-      const kevList = await fetchKEVList();
+      const kevList = await fetchKEVList(opts);
       if (kevList.length > 0) {
         kevMatches = matchKEVs(results, kevList);
         if (kevMatches.length > 0) {
@@ -2800,7 +2900,7 @@ async function main() {
   let kevMatches = [];
   if (!opts.skipVulns && !opts.skipKev) {
     log(`\n${C.dim}Fetching CISA KEV catalog...${C.reset}`);
-    const kevList = await fetchKEVList();
+    const kevList = await fetchKEVList(opts);
     if (kevList.length > 0) {
       kevMatches = matchKEVs(results, kevList);
       if (kevMatches.length > 0) {

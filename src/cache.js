@@ -22,13 +22,22 @@ import { fileURLToPath } from "node:url";
 const _scriptDir = dirname(dirname(fileURLToPath(import.meta.url)));
 
 // ── File-cache TTLs ───────────────────────────────────────────────────────────
-// npm registry docs change when new versions are published → refresh every 6 h.
-// OSV advisories are updated continuously but rarely change within an hour → 6 h.
-// OpenSSF Scorecard is recomputed weekly by the OpenSSF infrastructure → 24 h.
-export const TTL_NPM = 6 * 60 * 60 * 1000; //  6 hours
-export const TTL_OSV = 6 * 60 * 60 * 1000; //  6 hours
-export const TTL_SCORECARD = 24 * 60 * 60 * 1000; // 24 hours
-export const TTL_KEV = 24 * 60 * 60 * 1000; // 24 hours — CISA updates ~weekly
+// Default hard TTLs — after this long, the entry is expired and must be re-fetched.
+// npm registry docs change when new versions are published → 24 h default.
+// OSV advisories are updated continuously but rarely change within an hour → 12 h.
+// OpenSSF Scorecard is recomputed weekly by the OpenSSF infrastructure → 48 h.
+// CISA KEV is updated ~weekly → 48 h.
+export const TTL_NPM = 24 * 60 * 60 * 1000; // 24 hours (hard)
+export const TTL_OSV = 12 * 60 * 60 * 1000; // 12 hours (hard)
+export const TTL_SCORECARD = 48 * 60 * 60 * 1000; // 48 hours (hard)
+export const TTL_KEV = 48 * 60 * 60 * 1000; // 48 hours (hard)
+
+// Default soft TTLs — after this long, serve stale data and refresh in background.
+// Soft TTL must be strictly less than the corresponding hard TTL.
+export const SOFT_TTL_NPM = 6 * 60 * 60 * 1000; // 6 hours
+export const SOFT_TTL_OSV = 2 * 60 * 60 * 1000; // 2 hours
+export const SOFT_TTL_SCORECARD = 12 * 60 * 60 * 1000; // 12 hours
+export const SOFT_TTL_KEV = 12 * 60 * 60 * 1000; // 12 hours
 
 // ─── Per-run in-flight deduplication caches ───────────────────────────────────
 //
@@ -94,6 +103,35 @@ export async function readFromCache(key, ttlMs) {
     return data;
   } catch {
     return null; // missing, corrupt, or unreadable — treat as cache miss
+  }
+}
+
+/**
+ * Read a cached value with stale-while-revalidate semantics.
+ *
+ * Returns an object with `{ data, stale }` or `null`:
+ *   - `null` — entry is missing, corrupt, or past the hard TTL (expired)
+ *   - `{ data, stale: false }` — entry is fresh (within soft TTL)
+ *   - `{ data, stale: true }` — entry is stale (past soft TTL, within hard TTL)
+ *     The caller should return `data` immediately and trigger a background
+ *     refresh so the next invocation gets fresh data.
+ *
+ * @param {string} key - Cache key
+ * @param {number} hardTtlMs - Hard TTL: after this, entry is expired
+ * @param {number} softTtlMs - Soft TTL: after this, entry is stale but usable
+ */
+export async function readStaleFromCache(key, hardTtlMs, softTtlMs) {
+  if (!_cacheDir) return null;
+  try {
+    const { cachedAt, data } = JSON.parse(
+      await readFile(join(_cacheDir, `${key}.json`), "utf8"),
+    );
+    const age = Date.now() - new Date(cachedAt).getTime();
+    if (age > hardTtlMs) return null; // expired
+    fileCacheStats.hits++;
+    return { data, stale: age > softTtlMs };
+  } catch {
+    return null; // missing, corrupt, or unreadable
   }
 }
 
