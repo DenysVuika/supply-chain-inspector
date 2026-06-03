@@ -5,7 +5,7 @@
   "type": "module",
   "bin": {
     "supply-chain-inspector": "src/inspect.js",
-    "nsci": "src/inspect.js"
+    "sci": "src/inspect.js"
   },
   "files": [
     "src/inspect.js",

@@ -52,9 +52,9 @@ npx supply-chain-inspector @nx/jest
 # Or use a URL to a remote package.json
 npx supply-chain-inspector https://raw.githubusercontent.com/angular/angular/refs/heads/main/package.json
 
-# Or install globally once to get the short "nsci" alias
+# Or install globally once to get the short "sci" alias
 npm install -g supply-chain-inspector
-nsci path/to/package.json
+sci path/to/package.json
 
 # Or clone/copy the script and run it locally
 npx supply-chain-inspector path/to/package.json
@@ -95,7 +95,7 @@ Inspecting 14 package(s) — concurrency: 5
 npx supply-chain-inspector <path/to/package.json|url|npm-package> [options]
 
 # Via short alias (requires: npm install -g supply-chain-inspector)
-nsci <path/to/package.json|url|npm-package> [options]
+sci <path/to/package.json|url|npm-package> [options]
 
 # Or if running the script directly
 npx supply-chain-inspector <path/to/package.json|url|npm-package> [options]
