@@ -9,6 +9,7 @@
   },
   "files": [
     "src/inspect.js",
+    "src/graph.js",
     "src/logger.js",
     "src/cache.js",
     "src/pkg.js",
@@ -17,6 +18,7 @@
     "assets/templates/html/report.html",
     "assets/templates/graph/report.css",
     "assets/templates/graph/report.html",
+    "assets/templates/graph/report.js",
     "README.md",
     "LICENSE"
   ],
