@@ -9,6 +9,8 @@
 
 ![Collapsible findings detail — scorecard checks, version history, package info](assets/html-report-02.png)
 
+![Risk graph visualization](assets/sci-risk-graph.png)
+
 ---
 
 ## Features
