@@ -428,6 +428,28 @@ function scorecardBar(score) {
   return `${color}${bar}${C.reset} ${score.toFixed(1)}`;
 }
 
+/**
+ * Render an ASCII progress bar and write it to stderr.
+ * Overwrites the same line using \r so the terminal stays clean.
+ *
+ * Example output:  Fetching packages... [████████░░░░░░░░] 12/50
+ */
+function renderProgressBar(completed, total) {
+  if (!process.stderr.isTTY || process.env.NO_COLOR) return;
+
+  const barWidth = 20;
+  const ratio = total > 0 ? completed / total : 0;
+  const filled = Math.round(ratio * barWidth);
+  const bar = '█'.repeat(filled) + '░'.repeat(barWidth - filled);
+  const pct = Math.round(ratio * 100);
+
+  const line =
+    `Fetching packages... ${C.cyan}${bar}${C.reset} ${completed}/${total} (${pct}%)`;
+
+  // Clear the line first, then write the new progress
+  process.stderr.write(`\r\x1b[K${line}`);
+}
+
 /** Short vulnerability summary for the table column. */
 function vulnCell(vulns) {
   const s = vulns?.summary;
@@ -1353,15 +1375,21 @@ async function _doFetchScorecard(parsed, opts, skipCache = false) {
 /**
  * Run an array of async task functions with a max concurrency.
  * Returns results in the same order as the input tasks.
+ * @param {Function[]} tasks - Array of async functions returning results
+ * @param {number} concurrency - Max parallel workers
+ * @param {Function} [onProgress] - Optional callback(completed, total) called after each task finishes
  */
-async function runWithConcurrency(tasks, concurrency) {
+async function runWithConcurrency(tasks, concurrency, onProgress) {
   const results = new Array(tasks.length);
   let nextIndex = 0;
+  let completed = 0;
 
   async function worker() {
     while (nextIndex < tasks.length) {
       const i = nextIndex++;
       results[i] = await tasks[i]();
+      completed++;
+      if (onProgress) onProgress(completed, tasks.length);
     }
   }
 
@@ -2894,7 +2922,17 @@ async function main() {
       ),
   );
 
-  const results = await runWithConcurrency(tasks, opts.concurrency);
+  const onProgress =
+    !opts.verbose && toInspect.length > 1
+      ? (done, total) => renderProgressBar(done, total)
+      : undefined;
+
+  const results = await runWithConcurrency(tasks, opts.concurrency, onProgress);
+
+  // Clear the progress bar line before printing the report
+  if (onProgress && process.stderr.isTTY && !process.env.NO_COLOR) {
+    process.stderr.write('\r\x1b[K');
+  }
 
   // ── CISA KEV cross-reference ─────────────────────────────────────────────
   let kevMatches = [];
