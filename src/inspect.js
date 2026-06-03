@@ -724,7 +724,7 @@ function fetchNpmPackage(name) {
 
 async function _doFetchNpmPackage(name) {
   const cacheKey = `npm_${safeName(name)}`;
-  const cached = readFromCache(cacheKey, TTL_NPM);
+  const cached = await readFromCache(cacheKey, TTL_NPM);
   if (cached) return cached;
 
   // npm registry requires scoped package names to be URL-encoded as %40scope%2Fname
@@ -745,7 +745,7 @@ async function _doFetchNpmPackage(name) {
       return null;
     }
     const data = await res.json();
-    writeToCache(cacheKey, data, logWarn);
+    await writeToCache(cacheKey, data, logWarn);
     return data;
   } catch (err) {
     logErr(`npm fetch failed for ${name}: ${err.message}`);
@@ -895,7 +895,7 @@ function normalizeRepoUrl(repo) {
  */
 async function fetchVulnerabilities(name, version, ecosystem = 'npm') {
   const cacheKey = `osv_${safeName(name)}_${safeName(version)}`;
-  const cached = readFromCache(cacheKey, TTL_OSV);
+  const cached = await readFromCache(cacheKey, TTL_OSV);
   if (cached) return cached;
 
   const empty = {
@@ -957,7 +957,7 @@ async function fetchVulnerabilities(name, version, ecosystem = 'npm') {
     );
 
     const result = { summary, list, error: null };
-    writeToCache(cacheKey, result, logWarn);
+    await writeToCache(cacheKey, result, logWarn);
     return result;
   } catch (err) {
     logErr(`OSV query failed for ${name}@${version}: ${err.message}`);
@@ -978,7 +978,7 @@ async function fetchVulnerabilities(name, version, ecosystem = 'npm') {
  */
 async function fetchKEVList() {
   const cacheKey = 'kev_catalog';
-  const cached = readFromCache(cacheKey, TTL_KEV);
+  const cached = await readFromCache(cacheKey, TTL_KEV);
   if (cached) return cached;
 
   try {
@@ -992,7 +992,7 @@ async function fetchKEVList() {
     }
     const data = await res.json();
     const list = data.vulnerabilities ?? [];
-    writeToCache(cacheKey, list, logWarn);
+    await writeToCache(cacheKey, list, logWarn);
     return list;
   } catch (err) {
     logErr(`KEV catalog fetch error: ${err.message}`);
@@ -1214,7 +1214,7 @@ function fetchScorecard(repoUrl) {
 async function _doFetchScorecard(parsed) {
   const cacheKey =
     `scorecard_${safeName(parsed.owner)}__${safeName(parsed.repo)}`.toLowerCase();
-  const cached = readFromCache(cacheKey, TTL_SCORECARD);
+  const cached = await readFromCache(cacheKey, TTL_SCORECARD);
   if (cached) return cached;
 
   const notAvailable = {
@@ -1268,7 +1268,7 @@ async function _doFetchScorecard(parsed) {
       repoChecked: `github.com/${parsed.owner}/${parsed.repo}`,
       error: null,
     };
-    writeToCache(cacheKey, result, logWarn);
+    await writeToCache(cacheKey, result, logWarn);
     return result;
   } catch (err) {
     logWarn(
@@ -2288,6 +2288,50 @@ async function fetchLockfileFromUrl(url) {
   }
 }
 
+// ─── Cache helpers (used by both npm-package and package.json code paths) ──────
+
+/**
+ * Initialize the file cache from CLI options.
+ * Resolves the cache directory and creates it if needed.
+ * @param {object} opts - Parsed CLI options
+ * @returns {Promise<void>}
+ */
+async function initCacheFromOpts(opts) {
+  const scriptDir = getScriptDir();
+  const resolvedCacheDir = opts.cacheDir
+    ? resolve(opts.cacheDir)
+    : join(scriptDir, '.cache');
+  await initCache(resolvedCacheDir, opts.noCache);
+
+  const cacheDir = getCacheDir();
+  if (cacheDir) {
+    log(`${C.dim}Cache:    ${cacheDir}${C.reset}`);
+  } else if (opts.noCache) {
+    log(`${C.dim}Cache:    disabled (--no-cache)${C.reset}`);
+  }
+}
+
+/**
+ * Print cache hit/write stats to stderr (if any activity occurred).
+ */
+function printCacheStats() {
+  const parts = [];
+  if (fileCacheStats.hits > 0)
+    parts.push(
+      `${fileCacheStats.hits} file-cache hit${fileCacheStats.hits !== 1 ? 's' : ''}`,
+    );
+  if (fileCacheStats.writes > 0)
+    parts.push(`${fileCacheStats.writes} written`);
+  if (cacheStats.npmHits > 0 || cacheStats.scorecardHits > 0)
+    parts.push(
+      `${cacheStats.npmHits + cacheStats.scorecardHits} in-flight deduped`,
+    );
+  if (parts.length > 0) {
+    log(`${C.dim}  cache: ${parts.join('  ·  ')}${C.reset}`);
+    log('');
+  }
+}
+
 async function main() {
   const opts = parseArgs(process.argv);
 
@@ -2354,18 +2398,7 @@ async function main() {
     }
 
     // File cache initialisation
-    const scriptDir = getScriptDir();
-    const resolvedCacheDir = opts.cacheDir
-      ? resolve(opts.cacheDir)
-      : join(scriptDir, '.cache');
-    initCache(resolvedCacheDir, opts.noCache);
-
-    const cacheDir = getCacheDir();
-    if (cacheDir) {
-      log(`${C.dim}Cache:    ${cacheDir}${C.reset}`);
-    } else if (opts.noCache) {
-      log(`${C.dim}Cache:    disabled (--no-cache)${C.reset}`);
-    }
+    await initCacheFromOpts(opts);
 
     log(`\nSupply Chain Inspector`);
     log(`Package: ${parsed.name}@${parsed.versionSpec}`);
@@ -2481,28 +2514,7 @@ async function main() {
     }
 
     // Cache stats
-    const uniqueNpm = npmCache.size;
-    const uniqueScorecard = scorecardCache.size;
-    const anyStats =
-      cacheStats.npmHits > 0 ||
-      cacheStats.scorecardHits > 0 ||
-      fileCacheStats.hits > 0 ||
-      fileCacheStats.writes > 0;
-    if (anyStats) {
-      const parts = [];
-      if (fileCacheStats.hits > 0)
-        parts.push(
-          `${fileCacheStats.hits} file-cache hit${fileCacheStats.hits !== 1 ? 's' : ''}`,
-        );
-      if (fileCacheStats.writes > 0)
-        parts.push(`${fileCacheStats.writes} written`);
-      if (cacheStats.npmHits > 0 || cacheStats.scorecardHits > 0)
-        parts.push(
-          `${cacheStats.npmHits + cacheStats.scorecardHits} in-flight deduped`,
-        );
-      log(`${C.dim}  cache: ${parts.join('  ·  ')}${C.reset}`);
-      log('');
-    }
+    printCacheStats();
 
     // JSON output
     if (opts.json) {
@@ -2634,19 +2646,7 @@ async function main() {
   }
 
   // ── File cache initialisation ─────────────────────────────────────────────
-  const scriptDir = getScriptDir();
-  const resolvedCacheDir = opts.cacheDir
-    ? resolve(opts.cacheDir)
-    : join(scriptDir, '.cache');
-  initCache(resolvedCacheDir, opts.noCache);
-
-  // Log cache directory info
-  const cacheDir = getCacheDir();
-  if (cacheDir) {
-    log(`${C.dim}Cache:    ${cacheDir}${C.reset}`);
-  } else if (opts.noCache) {
-    log(`${C.dim}Cache:    disabled (--no-cache)${C.reset}`);
-  }
+  await initCacheFromOpts(opts);
 
   log(`\nSupply Chain Inspector`);
   log(`Package: ${pkg.name ?? '(unnamed)'} ${pkg.version ?? ''}`);
@@ -2856,28 +2856,7 @@ async function main() {
   }
 
   // ── Cache stats ───────────────────────────────────────────────────────────
-  const uniqueNpm = npmCache.size;
-  const uniqueScorecard = scorecardCache.size;
-  const anyStats =
-    cacheStats.npmHits > 0 ||
-    cacheStats.scorecardHits > 0 ||
-    fileCacheStats.hits > 0 ||
-    fileCacheStats.writes > 0;
-  if (anyStats) {
-    const parts = [];
-    if (fileCacheStats.hits > 0)
-      parts.push(
-        `${fileCacheStats.hits} file-cache hit${fileCacheStats.hits !== 1 ? 's' : ''}`,
-      );
-    if (fileCacheStats.writes > 0)
-      parts.push(`${fileCacheStats.writes} written`);
-    if (cacheStats.npmHits > 0 || cacheStats.scorecardHits > 0)
-      parts.push(
-        `${cacheStats.npmHits + cacheStats.scorecardHits} in-flight deduped`,
-      );
-    log(`${C.dim}  cache: ${parts.join('  ·  ')}${C.reset}`);
-    log('');
-  }
+  printCacheStats();
 
   // ── Lockfile status (summary) ───────────────────────────────────────────
   const lockfileResolvedCount = lockfileVersions.size;

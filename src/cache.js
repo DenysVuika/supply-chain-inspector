@@ -6,9 +6,13 @@
  * project don't re-fetch unchanged data.
  *
  * Also provides in-flight request deduplication via in-memory Maps.
+ *
+ * File I/O is fully async to avoid blocking the event loop during concurrent
+ * fetches.  Writes are atomic (write-to-tmp + rename) to prevent corrupt
+ * cache files on crash.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFile, writeFile, unlink, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -63,51 +67,83 @@ export const fileCacheStats = { hits: 0, writes: 0 };
 
 /**
  * Sanitise an arbitrary string for use as a filename component.
+ * Handles all characters that are invalid on common filesystems:
  *   @babel/core  →  babel__core
  *   1.2.3-beta.1 →  1.2.3-beta.1   (dots/hyphens are fine)
+ *   foo+bar      →  foo_bar
  */
 export function safeName(str) {
   return String(str)
     .replace(/^@/, "") // strip leading @ from scoped packages
     .replace(/\//g, "__") // @scope/name → scope__name
-    .replace(/:/g, "_"); // guard against any colons
+    .replace(/[/\\:*?"<>|+#]/g, "_"); // replace remaining filesystem-unsafe chars
 }
 
 /**
  * Read a cached value. Returns the stored data or null if the entry is
  * absent, unreadable, or older than `ttlMs` milliseconds.
  */
-export function readFromCache(key, ttlMs) {
+export async function readFromCache(key, ttlMs) {
   if (!_cacheDir) return null;
-  const file = join(_cacheDir, `${key}.json`);
-  if (!existsSync(file)) return null;
   try {
-    const { cachedAt, data } = JSON.parse(readFileSync(file, "utf8"));
+    const { cachedAt, data } = JSON.parse(
+      await readFile(join(_cacheDir, `${key}.json`), "utf8"),
+    );
     if (Date.now() - new Date(cachedAt).getTime() > ttlMs) return null;
     fileCacheStats.hits++;
     return data;
   } catch {
-    return null; // corrupt or unreadable — treat as cache miss
+    return null; // missing, corrupt, or unreadable — treat as cache miss
   }
 }
 
 /**
- * Write a value to the cache. Errors are logged as warnings but never thrown
- * so a non-writable cache directory never breaks the main analysis.
+ * Atomically rename a file.  Falls back to copy+delete for cross-device
+ * moves (unlikely for a local cache but handles edge cases).
+ */
+async function atomicRename(oldPath, newPath) {
+  try {
+    const { rename: renameFn } = await import("node:fs/promises");
+    await renameFn(oldPath, newPath);
+  } catch (err) {
+    if (err.code === "EXDEV") {
+      await writeFile(newPath, await readFile(oldPath));
+      await unlink(oldPath);
+    } else {
+      throw err;
+    }
+  }
+}
+
+/**
+ * Write a value to the cache atomically.
+ * Uses write-to-temp + rename to prevent corrupt files on crash.
+ * Errors are logged as warnings but never thrown so a non-writable cache
+ * directory never breaks the main analysis.
  * @param {string} key - Cache key
  * @param {any} data - Data to cache
  * @param {function} [logWarn] - Optional warning logger function
+ * @returns {Promise<void>}
  */
-export function writeToCache(key, data, logWarn) {
+export async function writeToCache(key, data, logWarn) {
   if (!_cacheDir) return;
+  const dest = join(_cacheDir, `${key}.json`);
+  const tmp = join(_cacheDir, `._${key}.${Date.now()}.tmp`);
   try {
-    writeFileSync(
-      join(_cacheDir, `${key}.json`),
-      JSON.stringify({ cachedAt: new Date().toISOString(), data }, null, 2),
+    await writeFile(
+      tmp,
+      JSON.stringify({ cachedAt: new Date().toISOString(), data }),
       "utf8",
     );
+    await atomicRename(tmp, dest);
     fileCacheStats.writes++;
   } catch (err) {
+    // Clean up temp file if it exists
+    try {
+      await unlink(tmp);
+    } catch {
+      // ignore — file may not have been created
+    }
     if (logWarn) {
       logWarn(`Cache write failed for ${key}: ${err.message}`);
     }
@@ -118,9 +154,9 @@ export function writeToCache(key, data, logWarn) {
  * Initialize the cache directory.
  * @param {string|null} cacheDir - Custom cache directory path, or null for default
  * @param {boolean} noCache - If true, disable caching entirely
- * @returns {string|null} The resolved cache directory path, or null if caching is disabled
+ * @returns {Promise<string|null>} The resolved cache directory path, or null if caching is disabled
  */
-export function initCache(cacheDir = null, noCache = false) {
+export async function initCache(cacheDir = null, noCache = false) {
   if (noCache) {
     _cacheDir = null;
     return null;
@@ -133,9 +169,9 @@ export function initCache(cacheDir = null, noCache = false) {
   }
 
   try {
-    mkdirSync(_cacheDir, { recursive: true });
+    await mkdir(_cacheDir, { recursive: true });
     return _cacheDir;
-  } catch (err) {
+  } catch {
     _cacheDir = null;
     return null;
   }
