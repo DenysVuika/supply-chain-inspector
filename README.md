@@ -116,6 +116,8 @@ etc.) work in this mode.
 
 **Note:** When using a remote URL, the lockfile (`package-lock.json`) is automatically fetched from the same directory. You can also explicitly specify a lockfile URL using `--lockfile=<url>`.
 
+If `package-lock.json` is missing for a remote URL, the tool falls back to npm-registry resolution. When `--include-transitive` is enabled, the CLI also checks for a sibling `pnpm-lock.yaml` and prints a clear note when it is detected but not supported for transitive resolution.
+
 ---
 
 ## Options
@@ -149,6 +151,7 @@ By default only `dependencies` (production) are scanned.
 | Flag | Description |
 | --- | --- |
 | `--concurrency=<N>` | Max parallel package fetches (default: `5`) |
+| `--verbose` | Show per-package fetch/progress logs (`→ package` and `✓ package@version`). By default these lines are hidden to reduce noise. |
 | `--lockfile=<path\|url>` | Path or URL to `package-lock.json` (auto-detected next to `package.json` if omitted; for remote URLs, auto-detects `package-lock.json` in same directory) |
 | `--no-scorecard` | Skip OpenSSF Scorecard lookups (faster, useful offline) |
 | `--no-vulns` | Skip OSV.dev vulnerability lookups |
@@ -187,7 +190,7 @@ an early refresh:
 | `--json` | Print the full result array as JSON to stdout |
 | `--output=<path>` | Write JSON to a file (implies `--json`) |
 | `--html[=<path>]` | Write a fully standalone HTML security report to a file (no server or internet connection required to view). Defaults to `report.html` when no path is given. |
-| `--graph[=<path>]` | Write a standalone vis-network dependency graph report to a file. Graph root is `package.json` with scope nodes (`dependencies`, `devDependencies`, etc.) and package child nodes. Defaults to `graph-report.html` when no path is given. |
+| `--graph[=<path>]` | Write a standalone vis-network dependency graph report to a file. Graph root is `name@version` when available (falls back to `name`, then `package.json`), with scope nodes (`dependencies`, `devDependencies`, etc.) and package child nodes. Defaults to `graph-report.html` when no path is given. |
 | `--graph-no-dev` | In npm-package graph mode (e.g. `npx supply-chain-inspector vite --graph`), hide `devDependencies` in the graph. By default all scopes are included. |
 
 ### Color
@@ -260,6 +263,9 @@ npx supply-chain-inspector https://raw.githubusercontent.com/user/repo/main/pack
 # Include transitive dependencies (requires lockfile)
 npx supply-chain-inspector https://raw.githubusercontent.com/user/repo/main/package.json \
   --include-transitive --findings
+
+# Show detailed per-package fetch/progress logs
+npx supply-chain-inspector package.json --verbose
 
 # Deep scan (all scopes + transitive + findings)
 npx supply-chain-inspector package.json \
