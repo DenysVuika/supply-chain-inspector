@@ -143,6 +143,15 @@ function computeLevels(rootId) {
 computeLevels(graphMeta.rootId);
 
 const visible = new Set();
+const edgeBaseById = new Map();
+
+function containsEdgeId(edge) {
+  return `contains:${edge.from}->${edge.to}`;
+}
+
+function dependsEdgeId(edge) {
+  return `depends:${edge.from}->${edge.to}`;
+}
 
 function ringRadius(level) {
   const base = 150;
@@ -267,11 +276,11 @@ function applyViewState() {
   data.nodes.clear();
   data.nodes.add(radialSeedNodes(visibleNodes));
 
-  data.edges.clear();
-  data.edges.add(
-    containsEdges
-      .filter((e) => visible.has(e.from) && visible.has(e.to))
-      .map((e) => {
+  const visibleContainsEdges = containsEdges
+    .filter((e) => visible.has(e.from) && visible.has(e.to))
+    .map((e) => {
+      const id = containsEdgeId(e);
+      const withId = { ...e, id };
         const fromOwn = ownRiskToneById.get(e.from) || "none";
         const toOwn = ownRiskToneById.get(e.to) || "none";
         const fromDesc = descendantRiskById.get(e.from) || "none";
@@ -280,24 +289,110 @@ function applyViewState() {
         const inheritedRed = fromDesc === "red" || toDesc === "red";
         if (ownRed) {
           return {
-            ...e,
+            ...withId,
             color: { color: "#d85f69", highlight: "#ef8088", hover: "#ff9ca3" },
             width: 1.8,
           };
         }
         if (inheritedRed) {
           return {
-            ...e,
+            ...withId,
             color: { color: "#b88f95", highlight: "#cca8ad", hover: "#dcc1c5" },
             width: 1.2,
           };
         }
-        return e;
-      }),
-  );
+        return withId;
+      });
+
+  const visibleDependsEdges = dependsEdges
+    .filter((e) => visible.has(e.from) && visible.has(e.to))
+    .map((e) => ({ ...e, id: dependsEdgeId(e) }));
+
+  const visibleEdges = [...visibleContainsEdges, ...visibleDependsEdges];
+
+  edgeBaseById.clear();
+  for (const edge of visibleEdges) {
+    edgeBaseById.set(edge.id, {
+      ...edge,
+      color: cloneColor(edge.color),
+    });
+  }
+
+  data.edges.clear();
+  data.edges.add(visibleEdges);
+}
+
+function resetPathHighlight() {
+  if (edgeBaseById.size === 0) return;
+  data.edges.clear();
   data.edges.add(
-    dependsEdges.filter((e) => visible.has(e.from) && visible.has(e.to)),
+    Array.from(edgeBaseById.values()).map((edge) => ({
+      ...edge,
+      color: cloneColor(edge.color),
+    })),
   );
+}
+
+function collectAncestorPathEdgeIds(startNodeId) {
+  const edgeIds = new Set();
+  const seen = new Set([startNodeId]);
+  const queue = [startNodeId];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+
+    const depParents = dependsParentsById.get(current) || [];
+    for (const parentId of depParents) {
+      if (visible.has(parentId) && visible.has(current)) {
+        edgeIds.add(dependsEdgeId({ from: parentId, to: current }));
+      }
+      if (!seen.has(parentId)) {
+        seen.add(parentId);
+        queue.push(parentId);
+      }
+    }
+
+    const containsParents = parentsById.get(current) || [];
+    for (const parentId of containsParents) {
+      if (visible.has(parentId) && visible.has(current)) {
+        edgeIds.add(containsEdgeId({ from: parentId, to: current }));
+      }
+      if (!seen.has(parentId)) {
+        seen.add(parentId);
+        queue.push(parentId);
+      }
+    }
+  }
+
+  return edgeIds;
+}
+
+function highlightPathToRoot(nodeId) {
+  if (!isRedNodeById(nodeId)) return;
+
+  const pathEdgeIds = collectAncestorPathEdgeIds(nodeId);
+  if (pathEdgeIds.size === 0) return;
+
+  const updates = [];
+  for (const edgeId of pathEdgeIds) {
+    const base = edgeBaseById.get(edgeId);
+    if (!base) continue;
+
+    updates.push({
+      id: edgeId,
+      dashes: false,
+      width: Math.max(Number(base.width || 1.4) + 1.2, 2.6),
+      color: {
+        color: "#ffd166",
+        highlight: "#ffe29a",
+        hover: "#fff0bf",
+      },
+    });
+  }
+
+  if (updates.length > 0) {
+    data.edges.update(updates);
+  }
 }
 
 const data = {
@@ -422,6 +517,17 @@ const options = {
 };
 
 const network = new vis.Network(container, data, options);
+
+network.on("selectNode", (params) => {
+  resetPathHighlight();
+  const nodeId = params.nodes?.[0];
+  if (!nodeId) return;
+  highlightPathToRoot(nodeId);
+});
+
+network.on("deselectNode", () => {
+  resetPathHighlight();
+});
 
 function reflowOnce() {
   network.setOptions({

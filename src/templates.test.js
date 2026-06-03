@@ -200,6 +200,8 @@ describe("loadGraphJsTemplate()", () => {
     expect(js).toContain("const network = new vis.Network");
     expect(js).toContain('document.getElementById("btn-refit")');
     expect(js).toContain("btnRefit.addEventListener");
+    expect(js).toContain('network.on("selectNode"');
+    expect(js).toContain('network.on("deselectNode"');
     expect(js).not.toContain("btnReset.addEventListener");
     expect(js).not.toContain("btnCollapse.addEventListener");
   });
