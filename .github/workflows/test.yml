@@ -25,3 +25,6 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+      - name: Run npx integration test
+        run: bash tests/integration-npx.sh
