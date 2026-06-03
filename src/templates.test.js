@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   loadCssTemplate,
   loadHtmlTemplate,
+  loadGraphCssTemplate,
+  loadGraphHtmlTemplate,
+  loadGraphJsTemplate,
   clearTemplateCache,
   renderTemplate,
   getTemplatesDir,
@@ -120,6 +123,92 @@ describe("loadHtmlTemplate()", () => {
   it("returns the same value on subsequent calls (caching)", () => {
     const first = loadHtmlTemplate();
     const second = loadHtmlTemplate();
+    expect(second).toBe(first);
+  });
+});
+
+describe("loadGraphCssTemplate()", () => {
+  beforeEach(() => {
+    clearTemplateCache();
+  });
+
+  it("returns a non-empty string", () => {
+    const css = loadGraphCssTemplate();
+    expect(typeof css).toBe("string");
+    expect(css.length).toBeGreaterThan(0);
+  });
+
+  it("contains expected graph CSS selectors", () => {
+    const css = loadGraphCssTemplate();
+    expect(css).toContain("#dependency-graph");
+    expect(css).toContain(".summary-chip");
+  });
+
+  it("returns the same value on subsequent calls (caching)", () => {
+    const first = loadGraphCssTemplate();
+    const second = loadGraphCssTemplate();
+    expect(second).toBe(first);
+  });
+});
+
+describe("loadGraphHtmlTemplate()", () => {
+  beforeEach(() => {
+    clearTemplateCache();
+  });
+
+  it("returns a non-empty string", () => {
+    const html = loadGraphHtmlTemplate();
+    expect(typeof html).toBe("string");
+    expect(html.length).toBeGreaterThan(0);
+  });
+
+  it("contains expected graph placeholders", () => {
+    const html = loadGraphHtmlTemplate();
+    expect(html).toContain("{{TITLE}}");
+    expect(html).toContain("{{CSS}}");
+    expect(html).toContain("{{PKG_LABEL}}");
+    expect(html).toContain("{{SUMMARY_CHIPS}}");
+    expect(html).toContain("__GRAPH_SCRIPT__");
+    expect(html).toContain('id="btn-refit"');
+    expect(html).toContain("Reflow Once");
+    expect(html).not.toContain('id="btn-reset"');
+    expect(html).not.toContain("Reset View");
+    expect(html).not.toContain('id="btn-collapse"');
+  });
+
+  it("returns the same value on subsequent calls (caching)", () => {
+    const first = loadGraphHtmlTemplate();
+    const second = loadGraphHtmlTemplate();
+    expect(second).toBe(first);
+  });
+});
+
+describe("loadGraphJsTemplate()", () => {
+  beforeEach(() => {
+    clearTemplateCache();
+  });
+
+  it("returns a non-empty string", () => {
+    const js = loadGraphJsTemplate();
+    expect(typeof js).toBe("string");
+    expect(js.length).toBeGreaterThan(0);
+  });
+
+  it("contains expected graph JS placeholders", () => {
+    const js = loadGraphJsTemplate();
+    expect(js).toContain("{{GRAPH_PAYLOAD}}");
+    expect(js).toContain("const network = new vis.Network");
+    expect(js).toContain('document.getElementById("btn-refit")');
+    expect(js).toContain("btnRefit.addEventListener");
+    expect(js).toContain('network.on("selectNode"');
+    expect(js).toContain('network.on("deselectNode"');
+    expect(js).not.toContain("btnReset.addEventListener");
+    expect(js).not.toContain("btnCollapse.addEventListener");
+  });
+
+  it("returns the same value on subsequent calls (caching)", () => {
+    const first = loadGraphJsTemplate();
+    const second = loadGraphJsTemplate();
     expect(second).toBe(first);
   });
 });

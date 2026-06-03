@@ -1,11 +1,11 @@
 {
   "name": "supply-chain-inspector",
-  "version": "1.4.0",
+  "version": "0.0.0",
   "description": "Standalone, zero-dependency CLI for npm supply chain security analysis — vulnerability scanning, OpenSSF Scorecard, install-script detection, publisher history, and more.",
   "type": "module",
   "bin": {
     "supply-chain-inspector": "src/inspect.js",
-    "nsci": "src/inspect.js"
+    "sci": "src/inspect.js"
   },
   "files": [
     "src/inspect.js",
@@ -15,6 +15,8 @@
     "src/templates.js",
     "assets/templates/html/report.css",
     "assets/templates/html/report.html",
+    "assets/templates/graph/report.css",
+    "assets/templates/graph/report.html",
     "README.md",
     "LICENSE"
   ],

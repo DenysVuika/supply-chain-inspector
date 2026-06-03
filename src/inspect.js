@@ -47,6 +47,7 @@
  *
  *   Data collection
  *     --concurrency=<N>      Max parallel package fetches (default: 5)
+ *     --verbose              Show per-package request/progress logs
  *     --lockfile=<path|url>  Path or URL to package-lock.json for exact version resolution
  *                            (auto-detected next to package.json if not given;
  *                            for URLs, auto-detects package-lock.json in same directory)
@@ -155,9 +156,9 @@
  *   OpenSSF Scorecard https://api.scorecard.dev       project health (17 checks)
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, realpathSync } from 'node:fs';
 import { resolve, dirname, basename, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { log, logOk, logErr, logWarn } from './logger.js';
 import { isNpmPackageName, parsePackageSpec } from './pkg.js';
 import {
@@ -181,6 +182,7 @@ import {
   loadHtmlTemplate,
   renderTemplate,
 } from './templates.js';
+import { generateGraphReport } from './graph.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -215,12 +217,15 @@ function parseArgs(argv) {
     lockfilePath: null,
     output: null,
     html: null,
+    graph: null,
+    graphNoDev: false,
     json: false,
     skipScorecard: false,
     skipVulns: false,
     skipKev: false,
     cacheDir: null, // null → resolved to default in main()
     noCache: false,
+    verbose: false,
     includeTransitive: false,
     showFindings: false,
     failOn: 'critical', // 'low' | 'medium' | 'high' | 'critical'
@@ -270,6 +275,10 @@ function parseArgs(argv) {
       if (!isNaN(n) && n > 0) opts.concurrency = n;
       continue;
     }
+    if (arg === '--verbose' || arg === '--versbose') {
+      opts.verbose = true;
+      continue;
+    }
     if (arg.startsWith('--version-history=')) {
       const n = parseInt(arg.split('=')[1], 10);
       if (!isNaN(n) && n >= 2) opts.versionHistory = n;
@@ -314,6 +323,18 @@ function parseArgs(argv) {
     }
     if (arg.startsWith('--html=')) {
       opts.html = arg.split('=').slice(1).join('=');
+      continue;
+    }
+    if (arg === '--graph') {
+      opts.graph = 'graph-report.html';
+      continue;
+    }
+    if (arg.startsWith('--graph=')) {
+      opts.graph = arg.split('=').slice(1).join('=');
+      continue;
+    }
+    if (arg === '--graph-no-dev') {
+      opts.graphNoDev = true;
       continue;
     }
     if (!arg.startsWith('--')) {
@@ -466,26 +487,26 @@ function loadLockfileVersions(lockfilePath) {
  * Reads from file path only (not used for remote lockfiles yet).
  */
 function loadAllLockfilePackagesFromData(lock) {
-  const versions = new Map();
+  const entries = new Map();
 
   // v2 / v3 format: lock.packages is a flat map of node_modules paths
   if (lock.packages && typeof lock.packages === 'object') {
     for (const [pkgPath, pkgMeta] of Object.entries(lock.packages)) {
       if (!pkgPath.startsWith('node_modules/')) continue;
       if (!pkgMeta.version) continue;
-      const name = pkgPath.replace(/^node_modules\//, '');
-      const parts = name.split('/');
-      const topName = parts[0].startsWith('@')
-        ? `${parts[0]}/${parts[1]}`
-        : parts[0];
-      if (!versions.has(topName)) {
-        versions.set(topName, pkgMeta.version);
+
+      // Use the actual package at the end of the node_modules chain, e.g.
+      // node_modules/a/node_modules/@scope/b -> @scope/b
+      const segments = pkgPath.split('node_modules/').filter(Boolean);
+      const name = segments[segments.length - 1];
+      if (!name) continue;
+
+      const key = `${name}@${pkgMeta.version}`;
+      if (!entries.has(key)) {
+        entries.set(key, { name, version: pkgMeta.version });
       }
     }
-    return Array.from(versions.entries()).map(([name, version]) => ({
-      name,
-      version,
-    }));
+    return Array.from(entries.values());
   }
 
   // v1 format: need to traverse the tree
@@ -496,7 +517,7 @@ function loadAllLockfilePackagesFromData(lock) {
       const key = `${name}@${pkgMeta.version}`;
       if (!seen.has(key) && pkgMeta.version) {
         seen.add(key);
-        versions.set(name, pkgMeta.version);
+        entries.set(key, { name, version: pkgMeta.version });
       }
       if (pkgMeta.dependencies) {
         traverse(pkgMeta.dependencies);
@@ -505,10 +526,7 @@ function loadAllLockfilePackagesFromData(lock) {
   }
   traverse(lock.dependencies);
 
-  return Array.from(versions.entries()).map(([name, version]) => ({
-    name,
-    version,
-  }));
+  return Array.from(entries.values());
 }
 
 /**
@@ -525,6 +543,131 @@ function loadAllLockfilePackages(lockfilePath) {
     logWarn(`Could not parse lockfile: ${err.message}`);
     return [];
   }
+}
+
+/**
+ * Choose lockfile version override for an inspection entry.
+ * Transitive entries already carry an exact lockfile version in versionSpec,
+ * so they must not be remapped by top-level name-based lockfile resolution.
+ */
+export function selectLockfileVersionForEntry(entry, lockfileVersions) {
+  if (entry?.scope === 'transitive') return null;
+  return lockfileVersions.get(entry.name) ?? null;
+}
+
+/**
+ * Load and parse lockfile JSON from file path.
+ * Returns null when missing or invalid.
+ */
+function loadLockfileData(lockfilePath) {
+  if (!lockfilePath || !existsSync(lockfilePath)) return null;
+
+  try {
+    const raw = readFileSync(lockfilePath, 'utf8');
+    return JSON.parse(raw);
+  } catch (err) {
+    logWarn(`Could not parse lockfile data: ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * Extract package-to-package dependency edges from package-lock.json data.
+ * Supports lockfile v1 nested dependencies and v2/v3 packages map.
+ * Returns objects: { fromName, fromVersion, toName, toVersion }.
+ */
+function extractLockfileDependencyEdges(lock) {
+  if (!lock || typeof lock !== 'object') return [];
+
+  const edgeKeys = new Set();
+  const edges = [];
+
+  const addEdge = (fromName, fromVersion, toName, toVersion) => {
+    if (!fromName || !toName) return;
+    const key = `${fromName}@${fromVersion ?? '?'}->${toName}@${toVersion ?? '?'}`;
+    if (edgeKeys.has(key)) return;
+    edgeKeys.add(key);
+    edges.push({ fromName, fromVersion, toName, toVersion });
+  };
+
+  // lockfile v2/v3: flat packages map keyed by node_modules path
+  if (lock.packages && typeof lock.packages === 'object') {
+    const pathMeta = new Map();
+
+    for (const [pkgPath, pkgMeta] of Object.entries(lock.packages)) {
+      if (!pkgPath.startsWith('node_modules/')) continue;
+      if (!pkgMeta?.version) continue;
+
+      const fullPath = pkgPath.replace(/^node_modules\//, '');
+      const leafPath = fullPath.split('/node_modules/').pop() ?? fullPath;
+      const leafParts = leafPath.split('/');
+      const name = leafParts[0].startsWith('@')
+        ? `${leafParts[0]}/${leafParts[1]}`
+        : leafParts[0];
+
+      pathMeta.set(pkgPath, {
+        name,
+        version: pkgMeta.version,
+        deps: {
+          ...(pkgMeta.dependencies ?? {}),
+          ...(pkgMeta.optionalDependencies ?? {}),
+          ...(pkgMeta.peerDependencies ?? {}),
+        },
+      });
+    }
+
+    const resolveDepPath = (parentPath, depName) => {
+      let current = parentPath;
+
+      while (true) {
+        const candidate = current
+          ? `${current}/node_modules/${depName}`
+          : `node_modules/${depName}`;
+        if (pathMeta.has(candidate)) return candidate;
+
+        if (!current) break;
+        const upIdx = current.lastIndexOf('/node_modules/');
+        if (upIdx === -1) {
+          current = '';
+        } else {
+          current = current.slice(0, upIdx);
+        }
+      }
+
+      return null;
+    };
+
+    for (const [pkgPath, meta] of pathMeta.entries()) {
+      for (const depName of Object.keys(meta.deps ?? {})) {
+        const depPath = resolveDepPath(pkgPath, depName);
+        if (!depPath) continue;
+        const depMeta = pathMeta.get(depPath);
+        if (!depMeta) continue;
+        addEdge(meta.name, meta.version, depMeta.name, depMeta.version);
+      }
+    }
+
+    return edges;
+  }
+
+  // lockfile v1: nested dependencies tree
+  const walk = (parent, depsObj) => {
+    if (!depsObj || typeof depsObj !== 'object') return;
+    for (const [name, meta] of Object.entries(depsObj)) {
+      if (!meta || !meta.version) continue;
+      addEdge(parent.name, parent.version, name, meta.version);
+      walk({ name, version: meta.version }, meta.dependencies);
+    }
+  };
+
+  if (lock.dependencies && typeof lock.dependencies === 'object') {
+    for (const [name, meta] of Object.entries(lock.dependencies)) {
+      if (!meta || !meta.version) continue;
+      walk({ name, version: meta.version }, meta.dependencies);
+    }
+  }
+
+  return edges;
 }
 
 // ─── Version spec helpers ─────────────────────────────────────────────────────
@@ -675,6 +818,10 @@ function extractVersionMetadata(pkgData, version) {
     repository: normalizeRepoUrl(vd.repository ?? pkgData.repository),
     homepage: vd.homepage ?? pkgData.homepage ?? null,
     license: vd.license ?? pkgData.license ?? null,
+    dependencies: vd.dependencies ?? {},
+    devDependencies: vd.devDependencies ?? {},
+    peerDependencies: vd.peerDependencies ?? {},
+    optionalDependencies: vd.optionalDependencies ?? {},
     directDependencies: Object.keys(vd.dependencies ?? {}),
     dependencyCount: Object.keys(vd.dependencies ?? {}).length,
     devDependencyCount: Object.keys(vd.devDependencies ?? {}).length,
@@ -1166,7 +1313,9 @@ async function inspectPackage(
   lockfileVersion,
   opts,
 ) {
-  log(`  → ${name}  (${versionSpec})`);
+  if (opts.verbose) {
+    log(`  → ${name}  (${versionSpec})`);
+  }
 
   // ── Step 1: npm registry ────────────────────────────────────────────────────
   const pkgData = await fetchNpmPackage(name);
@@ -1229,7 +1378,9 @@ async function inspectPackage(
     scScore === null
       ? `scorecard: ${C.dim}n/a${C.reset}`
       : `scorecard: ${scScore < 3 ? C.red : scScore < 5 ? C.yellow : C.green}${scScore}${C.reset}`;
-  logOk(`${name}@${resolvedVersion ?? '?'}  —  ${vulnPart}  ${scPart}`);
+  if (opts.verbose) {
+    logOk(`${name}@${resolvedVersion ?? '?'}  —  ${vulnPart}  ${scPart}`);
+  }
 
   return {
     name,
@@ -1764,6 +1915,8 @@ function generateHtmlReport(results, pkg, opts, kevMatches = []) {
   return renderTemplate(htmlTemplate, replacements);
 }
 
+// Graph report generation moved to src/graph.js.
+
 // ─── Terminal report ──────────────────────────────────────────────────────────
 
 /**
@@ -2078,6 +2231,39 @@ function getLockfileUrl(packageJsonUrl) {
 }
 
 /**
+ * Convert a package.json URL to a sibling file URL in the same directory.
+ */
+function getSiblingUrl(packageJsonUrl, siblingName) {
+  return packageJsonUrl.replace(/package\.json$/, siblingName);
+}
+
+/**
+ * Best-effort existence check for a remote file URL.
+ */
+async function remoteFileExists(url) {
+  try {
+    const res = await fetch(url, {
+      method: 'HEAD',
+      signal: AbortSignal.timeout(15000),
+    });
+
+    // Some hosts may not allow HEAD; fall back to a lightweight GET.
+    if (res.status === 405) {
+      const getRes = await fetch(url, {
+        method: 'GET',
+        headers: { Range: 'bytes=0-0' },
+        signal: AbortSignal.timeout(15000),
+      });
+      return getRes.ok;
+    }
+
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Fetch and parse a lockfile from a URL
  */
 async function fetchLockfileFromUrl(url) {
@@ -2125,6 +2311,7 @@ async function main() {
         '  --findings             Show per-package findings detail after the table',
         '                         (default: table only; hint shown when issues exist)',
         '  --concurrency=<N>      Max parallel fetches (default: 5)',
+        '  --verbose              Show per-package fetch/progress logs',
         '  --version-history=<N>  Versions to keep per package (default: 10, min: 2)',
         '                           2  = downgrade / major-jump detection only',
         '                           5  = + rapid publish bursts + dormancy detection',
@@ -2135,6 +2322,10 @@ async function main() {
         '  --output=<path>        Write JSON to a file (implies --json)',
         '  --html[=<path>]        Write a standalone HTML report to a file',
         '                         (defaults to report.html when no path given)',
+        '  --graph[=<path>]       Write a vis-network dependency graph report',
+        '                         (defaults to graph-report.html when no path given)',
+        '  --graph-no-dev         In npm-package graph mode, hide devDependencies',
+        '                         (default graph view includes all dependency scopes)',
         '  --no-scorecard         Skip OpenSSF Scorecard lookups',
         '  --no-vulns             Skip OSV.dev vulnerability lookups',
         '  --no-kev               Skip CISA KEV cross-reference (implies no KEV section)',
@@ -2234,6 +2425,58 @@ async function main() {
         log(`${C.dim}  HTML report written to: ${opts.html}${C.reset}`);
       } catch (err) {
         logErr(`Failed to write HTML report: ${err.message}`);
+      }
+    }
+
+    // Graph report
+    if (opts.graph) {
+      const graphPath = resolve(opts.graph);
+      try {
+        const mainResult = results[0] ?? null;
+        const reg = mainResult?.registry ?? {};
+        const rootPkgLabel = `${parsed.name}@${mainResult?.resolvedVersion ?? parsed.versionSpec}`;
+        const toDepEntries = (obj) =>
+          Object.entries(obj ?? {}).map(([name, versionSpec]) => ({
+            name,
+            versionSpec,
+          }));
+
+        const graphContext = {
+          rootLabel: parsed.name,
+          rootTitle: `${rootPkgLabel}\nRoot npm package`,
+          scopeDependencies: {
+            dependencies: toDepEntries(reg.dependencies),
+            devDependencies: opts.graphNoDev
+              ? []
+              : toDepEntries(reg.devDependencies),
+            peerDependencies: toDepEntries(reg.peerDependencies),
+            optionalDependencies: toDepEntries(reg.optionalDependencies),
+          },
+        };
+
+        if (opts.graphNoDev) {
+          log(
+            `${C.dim}  graph: hiding devDependencies for npm-package mode ` +
+              `(remove --graph-no-dev to include them)${C.reset}`,
+          );
+        }
+
+        writeFileSync(
+          graphPath,
+          generateGraphReport(
+            results,
+            pkg,
+            opts,
+            kevMatches,
+            null,
+            null,
+            graphContext,
+          ),
+          'utf8',
+        );
+        log(`${C.dim}  Graph report written to: ${opts.graph}${C.reset}`);
+      } catch (err) {
+        logErr(`Failed to write graph report: ${err.message}`);
       }
     }
 
@@ -2412,6 +2655,8 @@ async function main() {
   // ── Load lockfile for exact version resolution ──────────────────────────────
   let lockfilePath;
   let lockfileData = null;
+  let hasRemotePnpmLockfile = false;
+  let remotePnpmLockfileUrl = null;
 
   if (isUrlInput) {
     // Handle remote lockfile
@@ -2431,6 +2676,11 @@ async function main() {
       // Auto-detect lockfile from the same URL directory
       lockfilePath = getLockfileUrl(pkgPath);
       lockfileData = await fetchLockfileFromUrl(lockfilePath);
+
+      if (opts.includeTransitive && !lockfileData) {
+        remotePnpmLockfileUrl = getSiblingUrl(pkgPath, 'pnpm-lock.yaml');
+        hasRemotePnpmLockfile = await remoteFileExists(remotePnpmLockfileUrl);
+      }
     }
   } else {
     // Local file handling (existing behavior)
@@ -2484,7 +2734,9 @@ async function main() {
       logWarn(
         '--include-transitive requires a lockfile' +
           (lockfileData === null && isUrlInput
-            ? ' (lockfile not found at remote location)'
+            ? hasRemotePnpmLockfile
+              ? ` (package-lock.json not found at remote location; detected pnpm-lock.yaml at ${remotePnpmLockfileUrl}, but only package-lock.json is currently supported)`
+              : ' (lockfile not found at remote location)'
             : !lockfilePath
               ? ''
               : `; none found at ${lockfilePath}`),
@@ -2535,7 +2787,11 @@ async function main() {
   // ── Run all inspections with concurrency limit ──────────────────────────────
   const tasks = toInspect.map(
     (entry) => () =>
-      inspectPackage(entry, lockfileVersions.get(entry.name) ?? null, opts),
+      inspectPackage(
+        entry,
+        selectLockfileVersionForEntry(entry, lockfileVersions),
+        opts,
+      ),
   );
 
   const results = await runWithConcurrency(tasks, opts.concurrency);
@@ -2577,6 +2833,28 @@ async function main() {
     }
   }
 
+  // ── Graph report (opt-in via --graph=<path>) ─────────────────────────────
+  if (opts.graph) {
+    const graphPath = resolve(opts.graph);
+    try {
+      writeFileSync(
+        graphPath,
+        generateGraphReport(
+          results,
+          pkg,
+          opts,
+          kevMatches,
+          lockfileData,
+          lockfilePath,
+        ),
+        'utf8',
+      );
+      log(`${C.dim}  Graph report written to: ${opts.graph}${C.reset}`);
+    } catch (err) {
+      logErr(`Failed to write graph report: ${err.message}`);
+    }
+  }
+
   // ── Cache stats ───────────────────────────────────────────────────────────
   const uniqueNpm = npmCache.size;
   const uniqueScorecard = scorecardCache.size;
@@ -2600,6 +2878,35 @@ async function main() {
     log(`${C.dim}  cache: ${parts.join('  ·  ')}${C.reset}`);
     log('');
   }
+
+  // ── Lockfile status (summary) ───────────────────────────────────────────
+  const lockfileResolvedCount = lockfileVersions.size;
+  const lockfileSource = lockfileData
+    ? 'remote'
+    : lockfilePath && existsSync(lockfilePath)
+      ? 'local'
+      : null;
+
+  if (lockfileResolvedCount > 0 && lockfileSource) {
+    const autoDetected =
+      isUrlInput && !opts.lockfilePath && lockfileSource === 'remote';
+    const sourceText = autoDetected
+      ? `${lockfileSource}, auto-detected`
+      : lockfileSource;
+    log(
+      `${C.dim}  lockfile: ${sourceText} (${lockfileResolvedCount} resolved version${lockfileResolvedCount !== 1 ? 's' : ''})${C.reset}`,
+    );
+  } else {
+    const reason = isUrlInput
+      ? hasRemotePnpmLockfile
+        ? 'package-lock missing/unreadable; pnpm-lock.yaml detected but unsupported'
+        : 'missing or unreadable remote lockfile'
+      : 'missing or unreadable lockfile';
+    log(
+      `${C.dim}  lockfile: none (${reason}; npm registry fallback)${C.reset}`,
+    );
+  }
+  log('');
 
   // ── JSON output (opt-in via --json or --output) ───────────────────────────
   if (opts.json) {
@@ -2737,7 +3044,21 @@ async function main() {
 
 // ─── CLI entry point ─────────────────────────────────────────────────────────
 
-main().catch((err) => {
-  process.stderr.write(`\nFatal error: ${err.message}\n${err.stack}\n`);
-  process.exit(1);
-});
+const isMainModule = (() => {
+  if (!process.argv[1]) return false;
+
+  try {
+    const argvPath = realpathSync(resolve(process.argv[1]));
+    const modulePath = realpathSync(fileURLToPath(import.meta.url));
+    return argvPath === modulePath;
+  } catch {
+    return import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
+  }
+})();
+
+if (isMainModule) {
+  main().catch((err) => {
+    process.stderr.write(`\nFatal error: ${err.message}\n${err.stack}\n`);
+    process.exit(1);
+  });
+}

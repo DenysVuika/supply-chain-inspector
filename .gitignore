@@ -142,3 +142,4 @@ vite.config.ts.timestamp-*
 .cache
 /report.html
 /report.json
+/graph-report.html

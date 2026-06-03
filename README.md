@@ -9,6 +9,8 @@
 
 ![Collapsible findings detail — scorecard checks, version history, package info](assets/html-report-02.png)
 
+![Risk graph visualization](assets/sci-risk-graph.png)
+
 ---
 
 ## Features
@@ -39,13 +41,6 @@
 
 ---
 
-## Requirements
-
-- **Node.js 18 or later** (uses native `fetch`)
-- No npm install required — the script is fully self-contained, or use `npx` to run it directly from the registry
-
----
-
 ## Quick Start
 
 ```bash
@@ -59,9 +54,9 @@ npx supply-chain-inspector @nx/jest
 # Or use a URL to a remote package.json
 npx supply-chain-inspector https://raw.githubusercontent.com/angular/angular/refs/heads/main/package.json
 
-# Or install globally once to get the short "nsci" alias
+# Or install globally once to get the short "sci" alias
 npm install -g supply-chain-inspector
-nsci path/to/package.json
+sci path/to/package.json
 
 # Or clone/copy the script and run it locally
 npx supply-chain-inspector path/to/package.json
@@ -102,7 +97,7 @@ Inspecting 14 package(s) — concurrency: 5
 npx supply-chain-inspector <path/to/package.json|url|npm-package> [options]
 
 # Via short alias (requires: npm install -g supply-chain-inspector)
-nsci <path/to/package.json|url|npm-package> [options]
+sci <path/to/package.json|url|npm-package> [options]
 
 # Or if running the script directly
 npx supply-chain-inspector <path/to/package.json|url|npm-package> [options]
@@ -116,10 +111,12 @@ npx supply-chain-inspector <path/to/package.json|url|npm-package> [options]
 
 When an npm package name is provided (not a file path or URL), the tool inspects
 that single package directly against the npm registry. Supports scoped (`@scope/name`)
-and versioned (`name@version`) specs. All CLI options (`--json`, `--html`, `--no-scorecard`,
+and versioned (`name@version`) specs. All CLI options (`--json`, `--html`, `--graph`, `--no-scorecard`,
 etc.) work in this mode.
 
 **Note:** When using a remote URL, the lockfile (`package-lock.json`) is automatically fetched from the same directory. You can also explicitly specify a lockfile URL using `--lockfile=<url>`.
+
+If `package-lock.json` is missing for a remote URL, the tool falls back to npm-registry resolution. When `--include-transitive` is enabled, the CLI also checks for a sibling `pnpm-lock.yaml` and prints a clear note when it is detected but not supported for transitive resolution.
 
 ---
 
@@ -154,6 +151,7 @@ By default only `dependencies` (production) are scanned.
 | Flag | Description |
 | --- | --- |
 | `--concurrency=<N>` | Max parallel package fetches (default: `5`) |
+| `--verbose` | Show per-package fetch/progress logs (`→ package` and `✓ package@version`). By default these lines are hidden to reduce noise. |
 | `--lockfile=<path\|url>` | Path or URL to `package-lock.json` (auto-detected next to `package.json` if omitted; for remote URLs, auto-detects `package-lock.json` in same directory) |
 | `--no-scorecard` | Skip OpenSSF Scorecard lookups (faster, useful offline) |
 | `--no-vulns` | Skip OSV.dev vulnerability lookups |
@@ -192,6 +190,8 @@ an early refresh:
 | `--json` | Print the full result array as JSON to stdout |
 | `--output=<path>` | Write JSON to a file (implies `--json`) |
 | `--html[=<path>]` | Write a fully standalone HTML security report to a file (no server or internet connection required to view). Defaults to `report.html` when no path is given. |
+| `--graph[=<path>]` | Write a standalone vis-network dependency graph report to a file. Graph root is `name@version` when available (falls back to `name`, then `package.json`), with scope nodes (`dependencies`, `devDependencies`, etc.) and package child nodes. Defaults to `graph-report.html` when no path is given. |
+| `--graph-no-dev` | In npm-package graph mode (e.g. `npx supply-chain-inspector vite --graph`), hide `devDependencies` in the graph. By default all scopes are included. |
 
 ### Color
 
@@ -206,29 +206,29 @@ The formatted report always goes to **stderr**. **stdout** is reserved exclusive
 for JSON so you can pipe cleanly.
 
 ```bash
-# Report only — clean terminal view, no JSON noise
+# Report only
 npx supply-chain-inspector package.json
 
-# Report on stderr + JSON on stdout — pipe JSON to another tool
+# Report (stderr) + JSON (stdout)
 npx supply-chain-inspector package.json --json
 
-# Report on stderr + JSON saved to a file — review both independently
+# Save JSON to file (implies --json)
 npx supply-chain-inspector package.json --output=results.json
 
-# Write a standalone HTML report — open report.html in any browser
-npx supply-chain-inspector package.json --html=report.html
-
-# Write a standalone HTML report with default name (report.html)
+# HTML report (default: report.html)
 npx supply-chain-inspector package.json --html
 
-# HTML report + JSON side by side (useful for both humans and tooling)
+# Graph report (default: graph-report.html)
+npx supply-chain-inspector package.json --graph
+
+# In npm-package graph mode, hide devDependencies
+npx supply-chain-inspector vite --graph --graph-no-dev
+
+# HTML + JSON side by side
 npx supply-chain-inspector package.json --html=report.html --output=results.json
 
-# Suppress the report, get only JSON (useful for scripting)
+# JSON only (suppress report)
 npx supply-chain-inspector package.json --json 2>/dev/null
-
-# Pipe JSON straight into an AI tool
-npx supply-chain-inspector package.json --json | llm "analyze these deps"
 ```
 
 ---
@@ -236,91 +236,56 @@ npx supply-chain-inspector package.json --json | llm "analyze these deps"
 ## Common Recipes
 
 ```bash
-# Inspect a single npm package directly — quick security check
+# Inspect a single npm package
 npx supply-chain-inspector lodash-es
 
 # Inspect a scoped package with a pinned version
 npx supply-chain-inspector @angular/core@17.0.0
 
-# Inspect a package and save JSON for AI analysis
-npx supply-chain-inspector react --json > react-audit.json
-
-# Inspect a package and generate an HTML report
-npx supply-chain-inspector express --html=express-report.html
-
-# Scan all dependency groups, save JSON for later AI analysis
+# Full app scan (direct + dev + peer)
 npx supply-chain-inspector package.json \
   --include-dev --include-peer \
   --output=scan.json
 
-# Generate an HTML report for easy sharing with your team
-npx supply-chain-inspector package.json --html=report.html
-
-# Generate an HTML report with default filename (report.html)
+# HTML report (default filename)
 npx supply-chain-inspector package.json --html
 
-# Inspect a remote package.json from GitHub (auto-detects remote lockfile)
-npx supply-chain-inspector https://raw.githubusercontent.com/angular/angular/refs/heads/main/package.json
+# Dependency graph report
+npx supply-chain-inspector package.json --graph
 
-# Inspect remote package.json with full scan and HTML report
-npx supply-chain-inspector https://raw.githubusercontent.com/user/repo/main/package.json \
-  --include-dev --html=report.html
+# Remote package.json (auto-detects remote lockfile)
+npx supply-chain-inspector https://raw.githubusercontent.com/angular/angular/refs/heads/main/package.json
 
 # Inspect remote package.json with explicit remote lockfile URL
 npx supply-chain-inspector https://raw.githubusercontent.com/user/repo/main/package.json \
   --lockfile=https://raw.githubusercontent.com/user/repo/main/package-lock.json
 
-# Inspect remote package.json with transitive dependencies (requires lockfile)
+# Include transitive dependencies (requires lockfile)
 npx supply-chain-inspector https://raw.githubusercontent.com/user/repo/main/package.json \
   --include-transitive --findings
 
-# Full scan with HTML report, JSON data, and findings detail
-npx supply-chain-inspector package.json \
-  --include-dev --include-peer \
-  --output=scan.json --html=report.html --findings
+# Show detailed per-package fetch/progress logs
+npx supply-chain-inspector package.json --verbose
 
-# Full deep scan — all groups, all transitive deps, with findings detail
+# Deep scan (all scopes + transitive + findings)
 npx supply-chain-inspector package.json \
   --include-dev --include-peer --include-optional --include-transitive \
   --findings
 
-# Quick scan — skip Scorecard (no outbound calls to api.scorecard.dev)
+# Faster scan (skip Scorecard)
 npx supply-chain-inspector package.json --no-scorecard
 
-# High concurrency for large lockfiles (mind API rate limits)
-npx supply-chain-inspector package.json --concurrency=10
-
-# CI-friendly: plain text, no color, output to log file
-NO_COLOR=1 npx supply-chain-inspector package.json 2>&1 | tee security-report.txt
-
-# Fail the build if any critical vulnerabilities are found (default behavior)
-npx supply-chain-inspector package.json --fail-on=critical
-
-# Fail the build on high or critical vulnerabilities
+# CI fail on high or critical vulnerabilities
 npx supply-chain-inspector package.json --fail-on=high
 
-# Fail the build on any vulnerability (low, medium, high, or critical)
-npx supply-chain-inspector package.json --fail-on=low
-
-# Fail the build if any dependency uses a copyleft license (GPL, AGPL, LGPL)
-# (use the included test fixture to try this out)
+# CI fail on restricted licenses (fixture example)
 npx supply-chain-inspector https://raw.githubusercontent.com/DenysVuika/supply-chain-inspector/main/assets/test-license-package.json --fail-licenses="GPL,AGPL,LGPL"
-
-# CI pipeline with strict security policy (fail on medium+)
-npx supply-chain-inspector package.json \
-  --include-dev --include-peer \
-  --fail-on=medium \
-  --html=report.html
 
 # Force fresh data, bypassing any cached responses
 npx supply-chain-inspector package.json --no-cache
-
-# Share a single cache across multiple projects to avoid redundant API calls
-npx supply-chain-inspector package.json --cache-dir=~/.supply-chain-cache
-
-# Inspect only production deps with narrow version history (fastest)
-npx supply-chain-inspector package.json --version-history=2 --no-scorecard
 ```
+
+You can combine these patterns as needed (for example: `--html --output --findings`).
 
 ---
 

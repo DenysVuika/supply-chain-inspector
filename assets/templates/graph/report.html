@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Supply Chain Graph Report - {{TITLE}}</title>
+    <style>
+      {{CSS}}
+    </style>
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <h1>Supply Chain Dependency Graph</h1>
+      <div class="meta">
+        <span><strong>{{PKG_LABEL}}</strong></span>
+        <span>Generated {{GENERATED_AT}}</span>
+      </div>
+    </header>
+
+    <div class="summary-bar">{{SUMMARY_CHIPS}}</div>
+
+    <main class="main">
+      <div class="controls" role="group" aria-label="Graph view controls">
+        <button id="btn-refit" type="button" class="view-btn">Refit</button>
+        <button id="btn-reflow" type="button" class="view-btn">
+          Reflow Once
+        </button>
+      </div>
+      <div id="dependency-graph" aria-label="Dependency graph"></div>
+      <p class="hint">
+        Risk-only graph. Only dependencies and paths that lead to high/critical
+        findings are shown.
+      </p>
+    </main>
+
+    <script>
+      __GRAPH_SCRIPT__;
+    </script>
+  </body>
+</html>

@@ -12,11 +12,18 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const TEMPLATES_DIR = resolve(__dirname, "..", "assets", "templates");
 const HTML_DIR = resolve(TEMPLATES_DIR, "html");
+const GRAPH_DIR = resolve(TEMPLATES_DIR, "graph");
 const CSS_PATH = resolve(HTML_DIR, "report.css");
 const HTML_PATH = resolve(HTML_DIR, "report.html");
+const GRAPH_CSS_PATH = resolve(GRAPH_DIR, "report.css");
+const GRAPH_HTML_PATH = resolve(GRAPH_DIR, "report.html");
+const GRAPH_JS_PATH = resolve(GRAPH_DIR, "report.js");
 
 let cssCache = null;
 let htmlCache = null;
+let graphCssCache = null;
+let graphHtmlCache = null;
+let graphJsCache = null;
 
 /**
  * Load and cache the CSS template.
@@ -47,11 +54,62 @@ export function loadHtmlTemplate() {
 }
 
 /**
+ * Load and cache the graph CSS template.
+ * @returns {string} The graph CSS content
+ */
+export function loadGraphCssTemplate() {
+  if (graphCssCache) return graphCssCache;
+  try {
+    graphCssCache = readFileSync(GRAPH_CSS_PATH, "utf8");
+    return graphCssCache;
+  } catch (err) {
+    throw new Error(
+      `Failed to load graph CSS template from ${GRAPH_CSS_PATH}: ${err.message}`,
+    );
+  }
+}
+
+/**
+ * Load and cache the graph HTML template.
+ * @returns {string} The graph HTML template content
+ */
+export function loadGraphHtmlTemplate() {
+  if (graphHtmlCache) return graphHtmlCache;
+  try {
+    graphHtmlCache = readFileSync(GRAPH_HTML_PATH, "utf8");
+    return graphHtmlCache;
+  } catch (err) {
+    throw new Error(
+      `Failed to load graph HTML template from ${GRAPH_HTML_PATH}: ${err.message}`,
+    );
+  }
+}
+
+/**
+ * Load and cache the graph JavaScript template.
+ * @returns {string} The graph JavaScript template content
+ */
+export function loadGraphJsTemplate() {
+  if (graphJsCache) return graphJsCache;
+  try {
+    graphJsCache = readFileSync(GRAPH_JS_PATH, "utf8");
+    return graphJsCache;
+  } catch (err) {
+    throw new Error(
+      `Failed to load graph JS template from ${GRAPH_JS_PATH}: ${err.message}`,
+    );
+  }
+}
+
+/**
  * Clear template caches (useful for testing or reload).
  */
 export function clearTemplateCache() {
   cssCache = null;
   htmlCache = null;
+  graphCssCache = null;
+  graphHtmlCache = null;
+  graphJsCache = null;
 }
 
 /**
